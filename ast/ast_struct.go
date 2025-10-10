@@ -55,7 +55,7 @@ type ExprStatements struct {
 }
 
 type GlobalVariables struct {
-	Directive string
+	Directive *DirectiveStatement
 	Var       VarStatement
 	Export    bool
 }
@@ -71,10 +71,15 @@ type VarStatement struct {
 	addStatementField
 }
 
+type DirectiveStatement struct {
+	Name string
+	Src  string // для директив расширений которые переопределяют исходную функцию
+}
+
 type FunctionOrProcedure struct {
 	ExplicitVariables map[string]VarStatement
 	Name              string
-	Directive         string
+	Directives        []*DirectiveStatement
 	Body              Statements
 	Params            []ParamStatement
 	Type              StatementType

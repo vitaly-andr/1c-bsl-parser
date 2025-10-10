@@ -79,12 +79,7 @@ func (p *astPrint) printGlobalVariables(variables GlobalVariables) string {
 		export = " Экспорт "
 	}
 
-	directive := ""
-	if variables.Directive != "" {
-		directive = "\n" + variables.Directive + "\n"
-	}
-
-	builder.WriteString(directive)
+	builder.WriteString(printDirective(variables.Directive))
 	builder.WriteString("Перем ")
 	builder.WriteString(variables.Var.Name)
 	builder.WriteString(export)
@@ -126,14 +121,12 @@ func (p *astPrint) printFunctionOrProcedure(pf *FunctionOrProcedure) (result str
 		export = "Экспорт "
 	}
 
-	directive := ""
-	if pf.Directive != "" {
-		directive = "\n" + pf.Directive + "\n"
+	for _, d := range pf.Directives {
+		builder.WriteString(printDirective(d))
 	}
 
 	depth := 1
 
-	builder.WriteString(directive)
 	builder.WriteString(declaration)
 	builder.WriteString(" ")
 	builder.WriteString(pf.Name)
@@ -146,6 +139,18 @@ func (p *astPrint) printFunctionOrProcedure(pf *FunctionOrProcedure) (result str
 	builder.WriteString(p.printBody(pf.Body, depth))
 
 	return
+}
+
+func printDirective(directive *DirectiveStatement) string {
+	if directive == nil {
+		return ""
+	}
+
+	if directive.Src != "" {
+		return directive.Name + "(" + directive.Src + ")" + "\n"
+	}
+
+	return directive.Name + "\n"
 }
 
 func (p *astPrint) printVarStatement(v Statement) string {

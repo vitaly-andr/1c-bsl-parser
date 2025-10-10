@@ -78,12 +78,21 @@ var (
 		// "соответствие":      Dictionary,
 	}
 
+	// общие директивы
 	directives = map[string]int{
 		"&наклиенте":                      Directive,
 		"&насервере":                      Directive,
 		"&насерверебезконтекста":          Directive,
 		"&наклиентенасерверебезконтекста": Directive,
 		"&наклиентенасервере":             Directive,
+	}
+
+	// директивы расширений
+	extDirectives = map[string]int{
+		"&перед":              ExtDirective,
+		"&после":              ExtDirective,
+		"&вместо":             ExtDirective,
+		"&изменениеиконтроль": ExtDirective,
 	}
 )
 
@@ -216,6 +225,8 @@ func (t *Token) next() (int, string, error) {
 		lowLit := fastToLower("&" + literal)
 
 		if tName, ok := directives[lowLit]; ok {
+			return tName, "&" + literal, nil
+		} else if tName, ok = extDirectives[lowLit]; ok {
 			return tName, "&" + literal, nil
 		} else {
 			t.offset = pos

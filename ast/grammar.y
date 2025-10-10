@@ -14,7 +14,6 @@ package ast
 %type<exprs> exprs 
 %type<stmt> expr
 %type<opt_export> opt_export
-%type<opt_directive> opt_directive 
 %type<stmt> simple_expr
 %type<declarations_method_params> declarations_method_params
 %type<declarations_method_param> declarations_method_param
@@ -38,6 +37,8 @@ package ast
 %type<token> ','
 %type<global_variables> global_variables
 %type<token> comma
+%type<directive> directive
+%type<directives> opt_many_directives
 
 %union {
     token Token
@@ -53,16 +54,17 @@ package ast
     declarations_method_param ParamStatement
     exprs ExprStatements
     opt_export *Token
-    opt_directive *Token
     explicit_variables map[string]VarStatement
     global_variables []GlobalVariables
     opt_explicit_variables map[string]VarStatement
     identifiers []Token
     goToLabel *GoToLabelStatement
     opt_goToLabel *GoToLabelStatement
+    directive *DirectiveStatement
+    directives []*DirectiveStatement
 }
 
-%token<token> Directive token_identifier Procedure Var EndProcedure If Then ElseIf Else EndIf For Each In To Loop EndLoop Break Not ValueParam While GoToLabel
+%token<token> Directive ExtDirective token_identifier Procedure Var EndProcedure If Then ElseIf Else EndIf For Each In To Loop EndLoop Break Not ValueParam While GoToLabel
 %token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefind Export Date GoTo Execute
 
 %nonassoc LOW_PREC /* самый низкий приоритет */
@@ -77,7 +79,6 @@ package ast
 %left '+' '-'
 %left '*' '/' '%'
 %right UNARMinus UNARYPlus /* самый высокий приоритет */
-
 
 %%
 
@@ -110,19 +111,25 @@ main: global_variables {
     }
 ;
 
-opt_directive:  { $$ = nil}
-        | Directive { $$ = &$1}
+
+/* Директивы */
+directive:  { $$ = nil}
+        | Directive { $$ = &DirectiveStatement{ Name: $1.literal }}
+        | ExtDirective '(' String ')' { $$ = &DirectiveStatement{ Name: $1.literal, Src: $3.literal }}
 ;
+
+opt_many_directives: directive { $$ = []*DirectiveStatement{$1} }
+         | opt_many_directives directive { $$ = append($$, $2) }
 
 opt_export: { $$ = nil}
         | Export { $$ = &$1}
 ;
 
-global_variables: opt_directive Var identifiers opt_export semicolon { 
+global_variables: directive Var identifiers opt_export semicolon {
         $$ = make([]GlobalVariables,  len($3), len($3))
         for i, v := range $3 {
             if $1 != nil {
-                $$[i].Directive = $1.literal
+                $$[i].Directive = $1
             }
 
             $$[i].Export = $4 != nil 
@@ -131,12 +138,12 @@ global_variables: opt_directive Var identifiers opt_export semicolon {
 };
 
 
-funcProc: opt_directive Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
+funcProc: opt_many_directives Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
         {  
             $$ = createFunctionOrProcedure(PFTypeFunction, $1, $3.literal, $5, $7, $9, $10)
             isFunction(false, yylex) 
         }
-        | opt_directive Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        | opt_many_directives Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
         { 
             $$ = createFunctionOrProcedure(PFTypeProcedure, $1, $3.literal, $5, $7, $8, $9)
         }

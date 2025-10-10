@@ -26,6 +26,7 @@ func Test_Next(t *testing.T) {
 		//	fmt.Println(token)
 		//}
 	})
+
 	t.Run("var & Identifier", func(t *testing.T) {
 		ast := mock_ast.NewMockIast(c)
 		ast.EXPECT().SrsCode().Return(` Перем     ввв; ввв = 3;`).AnyTimes()
@@ -399,6 +400,25 @@ func Test_Next(t *testing.T) {
 			assert.Equal(t, "00000000", tok.literal)
 			assert.Equal(t, token, Date)
 		})
+	})
+
+	t.Run("extDirective", func(t *testing.T) {
+		ast := mock_ast.NewMockIast(c)
+		ast.EXPECT().SrsCode().Return(`&Вместо("ВыбратьИзФайла")`).AnyTimes()
+
+		tok := new(Token)
+
+		result := map[string]int{
+			"&Вместо":        ExtDirective,
+			"(":              '(',
+			")":              ')',
+			"ВыбратьИзФайла": String,
+			"\n":             10,
+		}
+
+		for token, err := tok.Next(ast); err == nil && token > 0; token, err = tok.Next(ast) {
+			assert.Equal(t, token, result[tok.literal])
+		}
 	})
 }
 

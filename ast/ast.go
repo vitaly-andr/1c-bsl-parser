@@ -139,8 +139,8 @@ func createFunctionOrProcedure(Type StatementType, directive Statement, name str
 		ExplicitVariables: variables,
 	}
 
-	if tok, ok := directive.(*Token); ok && tok != nil {
-		result.Directive = tok.literal
+	if d, ok := directive.([]*DirectiveStatement); ok && d != nil {
+		result.Directives = d
 	}
 
 	return result

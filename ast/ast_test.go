@@ -301,8 +301,8 @@ func TestExecute(t *testing.T) {
 		a := NewAST(code)
 		err := a.Parse()
 		if assert.NoError(t, err) {
-			jdata, _ := a.JSON()
-			assert.Equal(t, `{"Name":"","Body":[{"ExplicitVariables":{},"Name":"ВыполнитьВБезопасномРежиме","Directive":"\u0026НаСервере","Body":[{"Name":"Выполнить","Param":{"Statements":[{"Name":"Алгоритм"}]}}],"Params":[{"Name":"Алгоритм","IsValue":true},{"Default":{},"Name":"Параметры","IsValue":true}],"Type":1,"Export":false}]}`, string(jdata))
+			p := a.Print(PrintConf{OneLine: true})
+			assert.Equal(t, "&НаСервере\nПроцедура ВыполнитьВБезопасномРежиме(Знач Алгоритм, Знач Параметры = Неопределено) Выполнить(Алгоритм);КонецПроцедуры ", p)
 		}
 	})
 	t.Run("Execute-2", func(t *testing.T) {
@@ -1905,6 +1905,49 @@ func TestExpPriority(t *testing.T) {
 			assert.Equal(t, "Процедура f() ds = r / (КонВремя - НачВремя);fd = Формат(r / (КонВремя - НачВремя), \"ЧН=; ЧГ=\");КонецПроцедуры", strings.TrimSpace(p))
 		}
 	})
+}
+
+func Test_Directive(t *testing.T) {
+	code := `
+	&НаКлиенте
+	&Вместо("ВыбратьИзФайла")
+	Процедура Расш3_ВыбратьИзФайла(Команда)
+	
+	КонецПроцедуры
+	
+	
+	&ИзменениеИКонтроль("ВыбратьИзФайла")
+	&НаКлиенте
+	Процедура Расш3_ВыбратьИзФайла1(Команда)
+	
+	КонецПроцедуры
+	
+	&НаСервере
+	&НаСервере
+	&После("ВыбратьИзФайла")
+	Процедура Расш3_ВыбратьИзФайла1(Команда)
+	
+	КонецПроцедуры
+	
+	&Перед("ВыбратьИзФайла")
+	Процедура Расш3_ВыбратьИзФайла1(Команда)
+	
+	КонецПроцедуры
+	`
+
+	a := NewAST(code)
+	err := a.Parse()
+	if assert.NoError(t, err) {
+		if assert.Len(t, a.ModuleStatement.Body, 4) {
+			assert.Len(t, a.ModuleStatement.Body[0].(*FunctionOrProcedure).Directives, 2)
+			assert.Len(t, a.ModuleStatement.Body[1].(*FunctionOrProcedure).Directives, 2)
+			assert.Len(t, a.ModuleStatement.Body[2].(*FunctionOrProcedure).Directives, 3)
+			assert.Len(t, a.ModuleStatement.Body[3].(*FunctionOrProcedure).Directives, 1)
+		}
+	}
+
+	//p := a.Print(PrintConf{})
+	//fmt.Println(p)
 }
 
 func BenchmarkString(b *testing.B) {
