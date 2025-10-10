@@ -789,7 +789,11 @@ yydefault:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line .\grammar.y:121
 		{
-			yyVAL.directives = []*DirectiveStatement{yyDollar[1].directive}
+			if yyDollar[1].directive != nil {
+				yyVAL.directives = []*DirectiveStatement{yyDollar[1].directive}
+			} else {
+				yyVAL.directives = nil
+			}
 		}
 	case 12:
 		yyDollar = yyS[yypt-2 : yypt+1]

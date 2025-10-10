@@ -1933,16 +1933,21 @@ func Test_Directive(t *testing.T) {
 	Процедура Расш3_ВыбратьИзФайла1(Команда)
 	
 	КонецПроцедуры
+
+	Процедура Расш3_ВыбратьИзФайла1(Команда)
+	
+	КонецПроцедуры
 	`
 
 	a := NewAST(code)
 	err := a.Parse()
 	if assert.NoError(t, err) {
-		if assert.Len(t, a.ModuleStatement.Body, 4) {
+		if assert.Len(t, a.ModuleStatement.Body, 5) {
 			assert.Len(t, a.ModuleStatement.Body[0].(*FunctionOrProcedure).Directives, 2)
 			assert.Len(t, a.ModuleStatement.Body[1].(*FunctionOrProcedure).Directives, 2)
 			assert.Len(t, a.ModuleStatement.Body[2].(*FunctionOrProcedure).Directives, 3)
 			assert.Len(t, a.ModuleStatement.Body[3].(*FunctionOrProcedure).Directives, 1)
+			assert.Nil(t, a.ModuleStatement.Body[4].(*FunctionOrProcedure).Directives)
 		}
 	}
 

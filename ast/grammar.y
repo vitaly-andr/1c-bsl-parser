@@ -118,7 +118,7 @@ directive:  { $$ = nil}
         | ExtDirective '(' String ')' { $$ = &DirectiveStatement{ Name: $1.literal, Src: $3.literal }}
 ;
 
-opt_many_directives: directive { $$ = []*DirectiveStatement{$1} }
+opt_many_directives: directive {  if $1 != nil { $$ = []*DirectiveStatement{$1} } else { $$ = nil } }
          | opt_many_directives directive { $$ = append($$, $2) }
 
 opt_export: { $$ = nil}
