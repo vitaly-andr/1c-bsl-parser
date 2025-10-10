@@ -160,6 +160,18 @@ func TestParseString(t *testing.T) {
 			assert.Equal(t, "a = \"123_123_123\";", strings.TrimSpace(p))
 		}
 	})
+	t.Run("test6", func(t *testing.T) {
+		code := `Процедура test()
+		Диалог.Фильтр = "XML|*.xml";
+		КонецПроцедуры`
+
+		a := NewAST(code)
+		err := a.Parse()
+		if assert.NoError(t, err) && assert.NotNil(t, a.ModuleStatement.Body) {
+			p := a.Print(PrintConf{OneLine: true})
+			assert.Equal(t, "Процедура test() Диалог.Фильтр = \"XML|*.xml\";КонецПроцедуры", strings.TrimSpace(p))
+		}
+	})
 }
 
 func TestParseModule(t *testing.T) {
