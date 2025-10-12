@@ -43,6 +43,11 @@ func (ast *AstNode) PrintStatementWithConf(stat Statement, conf PrintConf) strin
 	}
 
 	p := &astPrint{conf: conf}
+
+	if pf, ok := stat.(*FunctionOrProcedure); ok {
+		return p.printFunctionOrProcedure(pf)
+	}
+
 	return p.printBodyItem(stat, 0)
 }
 
@@ -208,7 +213,6 @@ func (p *astPrint) printBody(items Statements, depth int) string {
 	}
 
 	builder.WriteString(p.newLine(1))
-
 	return builder.String()
 }
 
