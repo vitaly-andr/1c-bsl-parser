@@ -19,13 +19,10 @@ func TestParse(t *testing.T) {
 	err := a.Parse()
 	if assert.NoError(t, err) && assert.Len(t, a.ModuleStatement.Body, 1) {
 
-		//assert.Contains(t, a.PrintStatement(a.ModuleStatement.Body[0]), "Процедура")
+		assert.Contains(t, a.PrintStatement(a.ModuleStatement.Body[0]), "Процедура")
 
-		ff := a.PrintStatement(a.ModuleStatement.Body[0])
-		fmt.Println(ff)
-
-		//p := a.Print(PrintConf{OneLine: true})
-		//assert.Equal(t, "Процедура dsds() d = (((864 / 63) + 607) - ((177 * 906) * 27)) > (((737 * 429) + 84) - 270);КонецПроцедуры", strings.TrimSpace(p))
+		p := a.Print(PrintConf{OneLine: true})
+		assert.Equal(t, "Процедура dsds() d = (((864 / 63) + 607) - ((177 * 906) * 27)) > (((737 * 429) + 84) - 270);КонецПроцедуры", strings.TrimSpace(p))
 	}
 }
 
@@ -1724,6 +1721,9 @@ func TestParseAST(t *testing.T) {
 
 	a := NewAST(code)
 	err := a.Parse()
+
+	p := a.Print(PrintConf{Margin: 4})
+	fmt.Println(p)
 
 	if assert.NoError(t, err) {
 		p := a.Print(PrintConf{Margin: 4})
