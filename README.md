@@ -30,8 +30,9 @@ func main() {
 ```
 ### Примеры использования
 * [examples/pretty_code](examples/pretty_code)
-* [Obfuscator-1C](https://github.com/LazarenkoA/Obfuscator-1C)
-* [FuncGraphView](https://github.com/LazarenkoA/FuncGraphView)
+* [obfuscator-1C](https://github.com/LazarenkoA/Obfuscator-1C)
+* [funcGraphView](https://github.com/LazarenkoA/FuncGraphView)
+* [extensions-info](https://github.com/LazarenkoA/extensions-info)
 
 
 ### Примеры AST
