@@ -27,4 +27,5 @@ ast/y.output
 CLAUDE.md
 .claude/
 .specify/
-specs/
+specs/y.output
+/y.output

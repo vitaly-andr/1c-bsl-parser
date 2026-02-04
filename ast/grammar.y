@@ -40,7 +40,6 @@ package ast
 %type<directive> one_directive
 %type<directive> opt_directive
 %type<directives> directives
-%type<directives> opt_directives
 %type<stmt> lvalue_rest
 %type<stmt> call_rest
 %type<stmt> call_chain
@@ -81,7 +80,7 @@ package ast
 }
 
 %token<token> Directive ExtDirective token_identifier Procedure Var EndProcedure If Then ElseIf Else EndIf For Each In To Loop EndLoop Break Not ValueParam While GoToLabel
-%token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefined Export Date GoTo Execute
+%token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefined Null Export Date GoTo Execute Async Await
 %token<token> LVALUE_IDENT CALL_IDENT
 %token<token> PreprocIf PreprocElseIf PreprocElse PreprocEndIf PreprocRegion PreprocEndRegion PreprocUse
 
@@ -91,7 +90,7 @@ package ast
 %left NeEQ
 %left LE
 %left GE
-%right Not
+%right Not Await
 %left EQUAL
 %left '>' '<'
 %left '+' '-'
@@ -158,10 +157,6 @@ directives: one_directive { $$ = []*DirectiveStatement{$1} }
          | directives one_directive { $$ = append($$, $2) }
 ;
 
-opt_directives: { $$ = nil }
-        | directives { $$ = $1 }
-;
-
 opt_export: { $$ = nil}
         | Export { $$ = &$1}
 ;
@@ -179,14 +174,42 @@ global_variables: opt_directive Var identifiers opt_export semicolon {
 };
 
 
-funcProc: opt_directives Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
+/* 8 вариантов: ±директивы × ±async × функция/процедура */
+funcProc: Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
         {
-            $$ = createFunctionOrProcedure(PFTypeFunction, $1, $3.literal, $5, $7, $9, $10)
+            $$ = createFunctionOrProcedure(PFTypeFunction, nil, nil, $2.literal, $4, $6, $8, $9)
             isFunction(false, yylex)
         }
-        | opt_directives Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        | directives Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
         {
-            $$ = createFunctionOrProcedure(PFTypeProcedure, $1, $3.literal, $5, $7, $8, $9)
+            $$ = createFunctionOrProcedure(PFTypeFunction, $1, nil, $3.literal, $5, $7, $9, $10)
+            isFunction(false, yylex)
+        }
+        | Async Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
+        {
+            $$ = createFunctionOrProcedure(PFTypeFunction, nil, &$1, $3.literal, $5, $7, $9, $10)
+            isFunction(false, yylex)
+        }
+        | directives Async Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
+        {
+            $$ = createFunctionOrProcedure(PFTypeFunction, $1, &$2, $4.literal, $6, $8, $10, $11)
+            isFunction(false, yylex)
+        }
+        | Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        {
+            $$ = createFunctionOrProcedure(PFTypeProcedure, nil, nil, $2.literal, $4, $6, $7, $8)
+        }
+        | directives Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        {
+            $$ = createFunctionOrProcedure(PFTypeProcedure, $1, nil, $3.literal, $5, $7, $8, $9)
+        }
+        | Async Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        {
+            $$ = createFunctionOrProcedure(PFTypeProcedure, nil, &$1, $3.literal, $5, $7, $8, $9)
+        }
+        | directives Async Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        {
+            $$ = createFunctionOrProcedure(PFTypeProcedure, $1, &$2, $4.literal, $6, $8, $9, $10)
         }
 ;
 
@@ -511,6 +534,7 @@ expr : simple_expr { $$ = $1 }
     | expr LE expr { $$ = &ExpStatement{Operation: OpLe, Left: $1, Right: $3 } }
     | expr GE expr { $$ = &ExpStatement{Operation: OpGe, Left: $1, Right: $3 } }
     | Not expr { $$ = not($2) }
+    | Await expr { $$ = AwaitStatement{ Expr: $2 } }
     | new_object { $$ = $1 }
     | GoTo goToLabel { $$ = GoToStatement{ Label: $2 } }
     | ternary { $$ =  $1  } /* тернарный оператор */
@@ -537,6 +561,7 @@ simple_expr: String { $$ = $1.value  }
             | False { $$ =  $1.value  }
             | Date { $$ =  $1.value  }
             | Undefined { $$ = UndefinedStatement{} }
+            | Null { $$ = NullStatement{} }
             | goToLabel { $$ = $1}
 ;
 

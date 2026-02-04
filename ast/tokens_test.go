@@ -607,3 +607,81 @@ func Benchmark_fastToLower(b *testing.B) {
 //	assert.Equal(t, fastToLower(str), strings.ToLower(str))
 //	assert.Equal(t, fast_tolower.FastToLower(str), strings.ToLower(str))
 //}
+
+// T057: Test Async/Await tokens
+func Test_AsyncAwaitTokens(t *testing.T) {
+	c := gomock.NewController(t)
+	defer c.Finish()
+
+	t.Run("Async Russian", func(t *testing.T) {
+		ast := mock_ast.NewMockIast(c)
+		ast.EXPECT().SrsCode().Return(`Асинх Функция Тест()`).AnyTimes()
+		tok := new(Token)
+
+		token, err := tok.Next(ast)
+		assert.NoError(t, err)
+		assert.Equal(t, "Асинх", tok.literal)
+		assert.Equal(t, Async, token)
+
+		token, err = tok.Next(ast)
+		assert.NoError(t, err)
+		assert.Equal(t, "Функция", tok.literal)
+		assert.Equal(t, Function, token)
+	})
+
+	t.Run("Async English", func(t *testing.T) {
+		ast := mock_ast.NewMockIast(c)
+		ast.EXPECT().SrsCode().Return(`async Процедура Тест()`).AnyTimes()
+		tok := new(Token)
+
+		token, err := tok.Next(ast)
+		assert.NoError(t, err)
+		assert.Equal(t, "async", tok.literal)
+		assert.Equal(t, Async, token)
+	})
+
+	t.Run("Await Russian", func(t *testing.T) {
+		ast := mock_ast.NewMockIast(c)
+		ast.EXPECT().SrsCode().Return(`а = Ждать Метод()`).AnyTimes()
+		tok := new(Token)
+
+		// skip 'а' and '='
+		tok.Next(ast)
+		tok.Next(ast)
+
+		token, err := tok.Next(ast)
+		assert.NoError(t, err)
+		assert.Equal(t, "Ждать", tok.literal)
+		assert.Equal(t, Await, token)
+	})
+
+	t.Run("Await English", func(t *testing.T) {
+		ast := mock_ast.NewMockIast(c)
+		ast.EXPECT().SrsCode().Return(`а = await Метод()`).AnyTimes()
+		tok := new(Token)
+
+		// skip 'а' and '='
+		tok.Next(ast)
+		tok.Next(ast)
+
+		token, err := tok.Next(ast)
+		assert.NoError(t, err)
+		assert.Equal(t, "await", tok.literal)
+		assert.Equal(t, Await, token)
+	})
+
+	t.Run("Null token", func(t *testing.T) {
+		ast := mock_ast.NewMockIast(c)
+		ast.EXPECT().SrsCode().Return(`а = Null`).AnyTimes()
+		tok := new(Token)
+
+		// skip 'а' and '='
+		tok.Next(ast)
+		tok.Next(ast)
+
+		token, err := tok.Next(ast)
+		assert.NoError(t, err)
+		assert.Equal(t, "Null", tok.literal)
+		assert.Equal(t, Null, token)
+	})
+}

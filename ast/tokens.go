@@ -34,6 +34,9 @@ type Token struct {
 const (
 	EOL      = '\n' // end of line.
 	emptyLit = ""
+
+	// Buffer size hints for scanner operations
+	identifierBufSize = 10 // typical identifier length for pre-allocation
 )
 
 var (
@@ -70,9 +73,14 @@ var (
 		"истина":            True,
 		"ложь":              False,
 		"неопределено":      Undefined,
+		"null":              Null,
 		"не":                Not,
 		"экспорт":           Export,
 		"выполнить":         Execute,
+		"асинх":             Async,
+		"async":             Async,
+		"ждать":             Await,
+		"await":             Await,
 		//"вычислить":         Eval,
 		// "массив":            Array,
 		// "структура":         Struct,
@@ -269,7 +277,7 @@ func (t *Token) next() (int, string, error) {
 }
 
 func (t *Token) scanIdentifier() string {
-	ret := make([]rune, 0, 10) // как правило встречаются короткие идентификаторы и лучше предаллоцировать, это сильный буст дает
+	ret := make([]rune, 0, identifierBufSize) // pre-allocate for typical short identifiers
 
 	for {
 		let := t.currentLet()
@@ -481,13 +489,13 @@ func (t *Token) atStatementStart() bool {
 		return false // сравнение
 	case And, OR:
 		return false // логические операторы
-	case Not:
-		return false // унарный оператор
+	case Not, Await:
+		return false // унарные операторы
 	case ValueParam:
 		return false // после Знач идёт имя параметра
 
 	// Токены, после которых идёт НЕ statement, а часть конструкции
-	case Procedure, Function:
+	case Procedure, Function, Async:
 		return false // после них идёт имя функции
 	case Var:
 		return false // после Var идёт имя переменной
