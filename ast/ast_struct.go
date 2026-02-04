@@ -369,3 +369,24 @@ func walkHelper(parent *FunctionOrProcedure, parentStm Statement, statements Sta
 		callBack(parent, &parentStm, &statements[i])
 	}
 }
+
+type PreprocessorIfStatement struct {
+	Condition string
+	ThenBlock Statements
+	ElseIfs   []PreprocessorElseIf
+	ElseBlock Statements
+}
+
+type PreprocessorElseIf struct {
+	Condition string
+	Block     Statements
+}
+
+type RegionStatement struct {
+	Name string
+	Body Statements
+}
+
+type UseStatement struct {
+	Path string
+}

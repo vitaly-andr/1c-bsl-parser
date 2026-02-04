@@ -136,7 +136,11 @@ func (t *Token) Next(ast Iast) (token int, err error) {
 func (t *Token) next() (int, string, error) {
 	t.skipSpace()
 	t.skipComment()
-	t.skipRegions()
+
+	// Handle preprocessor directives (#Если, #Область, #Использовать)
+	if t.currentLet() == '#' {
+		return t.handlePreprocessor()
+	}
 
 	if t.prevDot {
 		defer func() { t.prevDot = false }()
@@ -342,28 +346,115 @@ func (t *Token) skipComment() {
 		return
 	}
 
-	// проверяем что на новой строке нет комментария или новой области, если есть, рекурсия
+	// проверяем что на новой строке нет комментария, если есть, рекурсия
+	// Примечание: #-директивы НЕ пропускаем — они обрабатываются в handlePreprocessor()
 	if cl := t.currentLet(); cl == '/' {
 		t.skipComment()
-	} else if cl := t.currentLet(); cl == '#' {
-		t.skipRegions()
 	}
 }
 
-func (t *Token) skipRegions() {
-	// todo пока будут пропускаться и условия типа #Если Не ВебКлиент Тогда, потом надо будет доработать
-	if t.currentLet() == '#' {
-		for ch := t.currentLet(); ch != EOL && ch != EOF; ch = t.currentLet() {
-			t.nextPos()
-		}
-		t.skipSpace()
+func (t *Token) handlePreprocessor() (int, string, error) {
+	if t.currentLet() != '#' {
+		return 0, "", nil
 	}
 
-	// проверяем что на новой строке нет комментария или новой области, если есть, рекурсия
-	if cl := t.currentLet(); cl == '/' {
-		t.skipComment()
-	} else if cl := t.currentLet(); cl == '#' {
-		t.skipRegions()
+	t.nextPos() // skip #
+	directive := t.scanIdentifier()
+	lowDirective := fastToLower(directive)
+
+	switch lowDirective {
+	case "если", "if":
+		condition := t.scanUntilThen()
+		return PreprocIf, condition, nil
+	case "иначеесли", "elseif":
+		condition := t.scanUntilThen()
+		return PreprocElseIf, condition, nil
+	case "иначе", "else":
+		t.skipToEOL()
+		return PreprocElse, "", nil
+	case "конецесли", "endif":
+		t.skipToEOL()
+		return PreprocEndIf, "", nil
+	case "область", "region":
+		name := t.scanRegionName()
+		return PreprocRegion, name, nil
+	case "конецобласти", "endregion":
+		t.skipToEOL()
+		return PreprocEndRegion, "", nil
+	case "использовать", "use":
+		path := t.scanUsePath()
+		return PreprocUse, path, nil
+	default:
+		t.skipToEOL()
+		return t.next()
+	}
+}
+
+// scanUntilThen сканирует условие препроцессора до ключевого слова Тогда/Then.
+func (t *Token) scanUntilThen() string {
+	var buf strings.Builder
+	for {
+		t.skipSpaceOnly()
+		ch := t.currentLet()
+		if ch == EOL || ch == EOF {
+			break
+		}
+
+		word := t.scanIdentifier()
+		if word == "" {
+			if ch == '(' || ch == ')' {
+				buf.WriteRune(ch)
+				t.nextPos()
+				continue
+			}
+			break
+		}
+
+		lowWord := fastToLower(word)
+		if lowWord == "тогда" || lowWord == "then" {
+			break
+		}
+
+		if buf.Len() > 0 {
+			buf.WriteRune(' ')
+		}
+		buf.WriteString(word)
+	}
+	return buf.String()
+}
+
+// scanRegionName сканирует имя области после #Область.
+func (t *Token) scanRegionName() string {
+	t.skipSpaceOnly()
+	return t.scanIdentifier()
+}
+
+// scanUsePath сканирует путь после #Использовать/#Use.
+func (t *Token) scanUsePath() string {
+	t.skipSpaceOnly()
+	if t.currentLet() == '"' {
+		path, _ := t.scanString('"')
+		return path
+	}
+	return t.scanIdentifier()
+}
+
+// skipToEOL пропускает все символы до конца строки.
+func (t *Token) skipToEOL() {
+	for ch := t.currentLet(); ch != EOL && ch != EOF; ch = t.currentLet() {
+		t.nextPos()
+	}
+}
+
+// skipSpaceOnly пропускает только пробелы и табы, но НЕ переводы строк.
+func (t *Token) skipSpaceOnly() {
+	for {
+		ch := t.currentLet()
+		if ch == ' ' || ch == '\t' {
+			t.nextPos()
+		} else {
+			break
+		}
 	}
 }
 

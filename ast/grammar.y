@@ -45,6 +45,11 @@ package ast
 %type<stmt> call_rest
 %type<stmt> call_chain
 %type<stmt> call_part
+%type<preproc_if> preproc_if
+%type<preproc_elseifs> opt_preproc_elseifs
+%type<preproc_body> opt_preproc_body preproc_body preproc_item opt_preproc_else
+%type<region_stmt> region_stmt
+%type<use_stmt> use_stmt
 
 %union {
     token Token
@@ -68,11 +73,17 @@ package ast
     opt_goToLabel *GoToLabelStatement
     directive *DirectiveStatement
     directives []*DirectiveStatement
+    preproc_if       *PreprocessorIfStatement
+    preproc_elseifs  []PreprocessorElseIf
+    preproc_body     Statements
+    region_stmt      *RegionStatement
+    use_stmt         *UseStatement
 }
 
 %token<token> Directive ExtDirective token_identifier Procedure Var EndProcedure If Then ElseIf Else EndIf For Each In To Loop EndLoop Break Not ValueParam While GoToLabel
 %token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefined Export Date GoTo Execute
 %token<token> LVALUE_IDENT CALL_IDENT
+%token<token> PreprocIf PreprocElseIf PreprocElse PreprocEndIf PreprocRegion PreprocEndRegion PreprocUse
 
 %nonassoc LOW_PREC /* самый низкий приоритет */
 %left OR
@@ -106,12 +117,27 @@ main_items: main
     | main_items main
 ;
 
-main: global_variables {  
+main: global_variables {
         if ast, ok := yylex.(*AstNode); ok {
             ast.ModuleStatement.Append($1, yylex)
         }
     }
     | funcProc {
+        if ast, ok := yylex.(*AstNode); ok {
+            ast.ModuleStatement.Append($1, yylex)
+        }
+    }
+    | preproc_if {
+        if ast, ok := yylex.(*AstNode); ok {
+            ast.ModuleStatement.Append($1, yylex)
+        }
+    }
+    | region_stmt {
+        if ast, ok := yylex.(*AstNode); ok {
+            ast.ModuleStatement.Append($1, yylex)
+        }
+    }
+    | use_stmt {
         if ast, ok := yylex.(*AstNode); ok {
             ast.ModuleStatement.Append($1, yylex)
         }
@@ -413,6 +439,59 @@ execute_param: String { $$ = $1.value  }
 stmt_tryCatch: Try opt_body Catch { setTryFlag(true, yylex) } opt_body EndTry { 
     $$ = TryStatement{ Body: $2, Catch: $5 }
     setTryFlag(false, yylex)
+};
+
+preproc_if: PreprocIf opt_preproc_body opt_preproc_elseifs opt_preproc_else PreprocEndIf {
+    $$ = &PreprocessorIfStatement{
+        Condition: $1.literal,
+        ThenBlock: $2,
+        ElseIfs:   $3,
+        ElseBlock: $4,
+    }
+};
+
+opt_preproc_elseifs: { $$ = nil }
+    | opt_preproc_elseifs PreprocElseIf opt_preproc_body {
+        $$ = append($1, PreprocessorElseIf{Condition: $2.literal, Block: $3})
+    }
+;
+
+opt_preproc_else: { $$ = nil }
+    | PreprocElse opt_preproc_body { $$ = $2 }
+;
+
+opt_preproc_body: { $$ = nil }
+    | preproc_body { $$ = $1 }
+;
+
+preproc_body: preproc_item { $$ = $1 }
+    | preproc_body preproc_item { $$ = append($1, $2...) }
+;
+
+preproc_item: funcProc { $$ = Statements{$1} }
+    | global_variables {
+        stmts := make(Statements, len($1))
+        for i, gv := range $1 {
+            stmts[i] = gv
+        }
+        $$ = stmts
+    }
+    | stmt semicolon { $$ = Statements{$1} }
+    | preproc_if { $$ = Statements{$1} }
+    | region_stmt { $$ = Statements{$1} }
+;
+
+region_stmt: PreprocRegion opt_preproc_body PreprocEndRegion {
+    $$ = &RegionStatement{
+        Name: $1.literal,
+        Body: $2,
+    }
+};
+
+use_stmt: PreprocUse {
+    $$ = &UseStatement{
+        Path: $1.literal,
+    }
 };
 
 /* все что может учавствовать в выражениях */

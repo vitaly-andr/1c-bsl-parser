@@ -72,7 +72,9 @@ func TestParse2(t *testing.T) {
 	a := NewAST(code)
 	err := a.Parse()
 	assert.NoError(t, err)
-	assert.Nil(t, a.ModuleStatement.Body)
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	_, ok := a.ModuleStatement.Body[0].(*PreprocessorIfStatement)
+	assert.True(t, ok, "expected PreprocessorIfStatement")
 }
 
 func TestParse3(t *testing.T) {
