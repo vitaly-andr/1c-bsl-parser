@@ -1,567 +1,352 @@
-### Парсер языка 1С
-Этот репозиторий содержит парсер для языка 1С, написанный на Go. Парсер использует yacc для эффективного синтаксического анализа и создает абстрактное синтаксическое дерево (AST) представления разобранного кода 1С.
+# 1C BSL Parser
 
-### Использование
-`go get  github.com/LazarenkoA/1c-language-parser@master`
+🇬🇧 [English](#english) | 🇷🇺 [Русский](#русский)
+
+---
+
+## English
+
+A fast and accurate parser for **1C:Enterprise (BSL)** programming language, written in Go. Generates Abstract Syntax Tree (AST) for code analysis, transformation, and tooling.
+
+> **Based on** [LazarenkoA/1c-language-parser](https://github.com/LazarenkoA/1c-language-parser) — extended with preprocessor support, PostgreSQL indexer, and web interface.
+
+### Features
+
+- **Full BSL syntax support** — procedures, functions, control flow, expressions
+- **Preprocessor directives** — `#If`, `#ElseIf`, `#Else`, `#EndIf`, `#Region`
+- **Compiler directives** — `&AtServer`, `&AtClient`, etc.
+- **JSON output** — AST serialization for tooling integration
+- **Pretty printer** — regenerate formatted code from AST
+
+### Installation
+
+#### As a library
+
+```bash
+go get github.com/vitaly-andr/1c-bsl-parser
+```
+
+#### CLI tools
+
+```bash
+# Parser CLI
+go install github.com/vitaly-andr/1c-bsl-parser/cmd/bsl-ast@latest
+
+# PostgreSQL indexer
+go install github.com/vitaly-andr/1c-bsl-parser/cmd/bsl-index@latest
+```
+
+### Quick Start
+
+#### Library Usage
 
 ```go
 package main
 
 import (
-	"fmt"
-
-	"github.com/LazarenkoA/1c-language-parser/ast"
+    "fmt"
+    "github.com/vitaly-andr/1c-bsl-parser/ast"
 )
 
 func main() {
-	code := `Процедура ПодключитьВнешнююОбработку() 
-                Если в = 1 И а = 1 или у = 3 Тогда
+    code := `
+    Procedure ProcessOrder(Order) Export
+        If Order.Status = "New" Then
+            Order.Process();
+        EndIf;
+    EndProcedure
+    `
 
-                КонецЕсли
-            КонецПроцедуры`
+    parser := ast.NewAST(code)
+    if err := parser.Parse(); err != nil {
+        panic(err)
+    }
 
-	a := ast.NewAST(code)
-	if err := a.Parse(); err == nil {
-		jdata, _ := a.JSON()
-		fmt.Println(string(jdata))
-	}
+    // Get JSON AST
+    jsonData, _ := parser.JSON()
+    fmt.Println(string(jsonData))
+
+    // Regenerate code
+    fmt.Println(parser.Print())
 }
+```
+
+#### CLI Usage
+
+```bash
+# Parse from stdin
+echo 'Function Test() Return 1; EndFunction' | bsl-ast
+
+# Parse file
+bsl-ast < module.bsl
+
+# Index to PostgreSQL
+bsl-index --source /path/to/1c/config --config myconfig
+```
+
+### AST Example
+
+Input:
+```bsl
+#Region Public
+
+Procedure Hello() Export
+    Message("Hello, World!");
+EndProcedure
+
+#EndRegion
+```
+
+Output (simplified):
+```json
+{
+  "Body": [
+    {
+      "Type": "RegionStatement",
+      "Name": "Public",
+      "Body": [
+        {
+          "Type": "FunctionOrProcedure",
+          "Name": "Hello",
+          "ProcType": 1,
+          "Export": true,
+          "Body": [
+            {
+              "Type": "MethodStatement",
+              "Name": "Message",
+              "Params": ["Hello, World!"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Project Structure
 
 ```
-### Примеры использования
-* [examples/pretty_code](examples/pretty_code)
-* [obfuscator-1C](https://github.com/LazarenkoA/Obfuscator-1C)
-* [funcGraphView](https://github.com/LazarenkoA/FuncGraphView)
-* [extensions-info](https://github.com/LazarenkoA/extensions-info)
+├── ast/                    # Parser package
+│   ├── grammar.y           # Yacc grammar definition
+│   ├── tokens.go           # Lexer implementation
+│   ├── ast.go              # Main parser API
+│   ├── ast_struct.go       # AST node types
+│   └── ast_print.go        # Code generator
+└── examples/               # Usage examples
+```
 
+### Development
 
-### Примеры AST
-Вот несколько примеров, демонстрирующих возможности парсера языка 1С:
-```1C
-Процедура Пример()
-	Сообщить("Привет, мир!");
+```bash
+# Clone
+git clone https://github.com/vitaly-andr/1c-bsl-parser.git
+cd 1c-bsl-parser
+
+# Install dependencies
+go mod download
+
+# Regenerate parser (after grammar.y changes)
+go generate ./ast/...
+
+# Run tests
+go test -v ./...
+
+# Build CLI tools
+go build -o bin/bsl-ast ./cmd/bsl-ast
+go build -o bin/bsl-index ./cmd/bsl-index
+```
+
+### Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+### Credits
+
+- Original parser by [LazarenkoA](https://github.com/LazarenkoA/1c-language-parser)
+- Grammar based on [1C:Enterprise documentation](https://its.1c.ru/)
+
+---
+
+## Русский
+
+Быстрый и точный парсер языка **1С:Предприятие (BSL)**, написанный на Go. Генерирует абстрактное синтаксическое дерево (AST) для анализа, трансформации и создания инструментов.
+
+> **Основан на** [LazarenkoA/1c-language-parser](https://github.com/LazarenkoA/1c-language-parser) — расширен поддержкой препроцессора, индексатором PostgreSQL и веб-интерфейсом.
+
+### Возможности
+
+- **Полная поддержка синтаксиса BSL** — процедуры, функции, управляющие конструкции, выражения
+- **Директивы препроцессора** — `#Если`, `#ИначеЕсли`, `#Иначе`, `#КонецЕсли`, `#Область`
+- **Директивы компиляции** — `&НаСервере`, `&НаКлиенте` и др.
+- **JSON вывод** — сериализация AST для интеграции
+- **Форматирование кода** — регенерация отформатированного кода из AST
+
+### Установка
+
+#### Как библиотека
+
+```bash
+go get github.com/vitaly-andr/1c-bsl-parser
+```
+
+#### CLI инструменты
+
+```bash
+# Парсер
+go install github.com/vitaly-andr/1c-bsl-parser/cmd/bsl-ast@latest
+
+# Индексатор PostgreSQL
+go install github.com/vitaly-andr/1c-bsl-parser/cmd/bsl-index@latest
+```
+
+### Быстрый старт
+
+#### Использование как библиотеки
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/vitaly-andr/1c-bsl-parser/ast"
+)
+
+func main() {
+    code := `
+    Процедура ОбработатьЗаказ(Заказ) Экспорт
+        Если Заказ.Статус = "Новый" Тогда
+            Заказ.Обработать();
+        КонецЕсли;
+    КонецПроцедуры
+    `
+
+    parser := ast.NewAST(code)
+    if err := parser.Parse(); err != nil {
+        panic(err)
+    }
+
+    // Получить JSON AST
+    jsonData, _ := parser.JSON()
+    fmt.Println(string(jsonData))
+
+    // Сгенерировать код обратно
+    fmt.Println(parser.Print())
+}
+```
+
+#### Использование CLI
+
+```bash
+# Парсинг из stdin
+echo 'Функция Тест() Возврат 1; КонецФункции' | bsl-ast
+
+# Парсинг файла
+bsl-ast < module.bsl
+
+# Индексация в PostgreSQL
+bsl-index --source /path/to/1c/config --config myconfig
+```
+
+### Пример AST
+
+Входной код:
+```bsl
+#Область ПрограммныйИнтерфейс
+
+Процедура Привет() Экспорт
+    Сообщить("Привет, мир!");
 КонецПроцедуры
+
+#КонецОбласти
 ```
-AST:
-```
-main.ModuleStatement{
-  Name: "",
-  Body: []main.Statement{
-    main.FunctionOrProcedure{
-      Type: 1,
-      Name: "Пример",
-      Body: []main.Statement{
-        main.MethodStatement{
-          Name:  "Сообщить",
-          Param: []main.Statement{
-            "Привет, мир!",
-          },
-        },
-      },
-      Export:            false,
-      Params:            []main.ParamStatement{},
-      Directive:         "",
-      ExplicitVariables: map[string]main.VarStatement{},
-    },
-  },
+
+Результат (упрощённо):
+```json
+{
+  "Body": [
+    {
+      "Type": "RegionStatement",
+      "Name": "ПрограммныйИнтерфейс",
+      "Body": [
+        {
+          "Type": "FunctionOrProcedure",
+          "Name": "Привет",
+          "ProcType": 1,
+          "Export": true,
+          "Body": [
+            {
+              "Type": "MethodStatement",
+              "Name": "Сообщить",
+              "Params": ["Привет, мир!"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }
 ```
 
-
-```1C
-Если a = b и c = 8 или истина Тогда
-	Сообщить("Условие выполнено");
-ИначеЕсли ВтороеУсловие Тогда
-	Сообщить("Второе условие выполнено");
-Иначе
-	Сообщить("Ни одно из условий не выполнено");
-КонецЕсли
+### Структура проекта
 
 ```
-AST:
-```
-main.ModuleStatement{
-  Name: "",
-  Body: []main.Statement{
-    main.FunctionOrProcedure{
-      Type: 1,
-      Name: "Пример",
-      Body: []main.Statement{
-        main.IfStatement{
-          Expression: main.ExpStatement{
-            Operation: 11,
-            Left:      main.ExpStatement{
-              Operation: 12,
-              Left:      main.ExpStatement{
-                Operation: 4,
-                Left:      main.VarStatement{
-                  Name:  "a",
-                  unary: false,
-                  not:   false,
-                },
-                Right: main.VarStatement{
-                  Name:  "b",
-                  unary: false,
-                  not:   false,
-                },
-                unary: false,
-                not:   false,
-              },
-              Right: main.ExpStatement{
-                Operation: 4,
-                Left:      main.VarStatement{
-                  Name:  "c",
-                  unary: false,
-                  not:   false,
-                },
-                Right: 8.000000,
-                unary: false,
-                not:   false,
-              },
-              unary: false,
-              not:   false,
-            },
-            Right: true,
-            unary: false,
-            not:   false,
-          },
-          TrueBlock: []main.Statement{
-            main.MethodStatement{
-              Name:  "Сообщить",
-              Param: []main.Statement{
-                "Условие выполнено",
-              },
-            },
-          },
-          IfElseBlock: []*main.IfStatement{
-            &main.IfStatement{
-              Expression: main.VarStatement{
-                Name:  "ВтороеУсловие",
-                unary: false,
-                not:   false,
-              },
-              TrueBlock: []main.Statement{
-                main.MethodStatement{
-                  Name:  "Сообщить",
-                  Param: []main.Statement{
-                    "Второе условие выполнено",
-                  },
-                },
-              },
-              IfElseBlock: []*main.IfStatement{},
-              ElseBlock:   []main.Statement{},
-            },
-          },
-          ElseBlock: []main.Statement{
-            main.MethodStatement{
-              Name:  "Сообщить",
-              Param: []main.Statement{
-                "Ни одно из условий не выполнено",
-              },
-            },
-          },
-        },
-      },
-      Export:            false,
-      Params:            []main.ParamStatement{},
-      Directive:         "",
-      ExplicitVariables: map[string]main.VarStatement{},
-    },
-  },
-}
-
+├── ast/                    # Пакет парсера
+│   ├── grammar.y           # Yacc грамматика
+│   ├── tokens.go           # Лексер
+│   ├── ast.go              # Основной API
+│   ├── ast_struct.go       # Типы узлов AST
+│   └── ast_print.go        # Генератор кода
+└── examples/               # Примеры использования
 ```
 
-<details>
-<summary>Более сложный пример (код случайный)</summary>
+### Разработка
 
+```bash
+# Клонирование
+git clone https://github.com/vitaly-andr/1c-bsl-parser.git
+cd 1c-bsl-parser
 
-```1C
-Процедура ОткрытьНавигационнуюСсылку(НавигационнаяСсылка, Знач Оповещение = Неопределено) Экспорт
-	
-	Контекст = Новый Структура;
-	Контекст.Вставить("НавигационнаяСсылка", НавигационнаяСсылка);
-	Контекст.Вставить("Оповещение", Оповещение);
-	
-	ОписаниеОшибки = СтроковыеФункцииКлиентСервер.ПодставитьПараметрыВСтроку(
-			НСтр("ru = 'Не удалось перейти по ссылке ""%1"" по причине: 
-			           |Неверно задана навигационная ссылка.'"),
-			НавигационнаяСсылка);
-	
-	Если Не ОбщегоНазначенияСлужебныйКлиент.ЭтоДопустимаяСсылка(НавигационнаяСсылка) Тогда 
-		ОбщегоНазначенияСлужебныйКлиент.ОткрытьНавигационнуюСсылкуОповеститьОбОшибке(ОписаниеОшибки, Контекст);
-		Возврат;
-	КонецЕсли;
-	
-	Если ОбщегоНазначенияСлужебныйКлиент.ЭтоВебСсылка(НавигационнаяСсылка)
-		Или ОбщегоНазначенияСлужебныйКлиент.ЭтоНавигационнаяСсылка(НавигационнаяСсылка) Тогда 
-		
-		Попытка
-			а = а /0;
-		Исключение
-			ОбщегоНазначенияСлужебныйКлиент.ОткрытьНавигационнуюСсылкуОповеститьОбОшибке(ОписаниеОшибки, Контекст);
-			Возврат;
-		КонецПопытки;
-		
-		Если Оповещение <> Неопределено Тогда 
-			ПриложениеЗапущено = Истина;
-			ВыполнитьОбработкуОповещения(Оповещение, ПриложениеЗапущено);
-		КонецЕсли;
-		
-		Возврат;
-	КонецЕсли;
-	
-	Если ОбщегоНазначенияСлужебныйКлиент.ЭтоСсылкаНаСправку(НавигационнаяСсылка) Тогда 
-		ОткрытьСправку(НавигационнаяСсылка);
-		Возврат;
-	КонецЕсли;
-КонецПроцедуры
+# Установка зависимостей
+go mod download
+
+# Перегенерация парсера (после изменения grammar.y)
+go generate ./ast/...
+
+# Запуск тестов
+go test -v ./...
+
+# Сборка CLI
+go build -o bin/bsl-ast ./cmd/bsl-ast
+go build -o bin/bsl-index ./cmd/bsl-index
 ```
 
-</details>
+### Участие в разработке
 
-<details>
-<summary>получаем такое AST</summary>
+Приветствуются pull request'ы!
 
-```
-main.ModuleStatement{
-  Name: "",
-  Body: []main.Statement{
-    main.FunctionOrProcedure{
-      Type: 1,
-      Name: "ОткрытьНавигационнуюСсылку",
-      Body: []main.Statement{
-        main.ExpStatement{
-          Operation: 4,
-          Left:      main.VarStatement{
-            Name:  "Контекст",
-            unary: false,
-            not:   false,
-          },
-          Right: main.NewObjectStatement{
-            Constructor: "Структура",
-            Param:       []main.Statement{},
-          },
-          unary: false,
-          not:   false,
-        },
-        main.CallChainStatement{
-          Unit: main.MethodStatement{
-            Name:  "Вставить",
-            Param: []main.Statement{
-              "НавигационнаяСсылка",
-              main.VarStatement{
-                Name:  "НавигационнаяСсылка",
-                unary: false,
-                not:   false,
-              },
-            },
-          },
-          Call: main.VarStatement{
-            Name:  "Контекст",
-            unary: false,
-            not:   false,
-          },
-        },
-        main.CallChainStatement{
-          Unit: main.MethodStatement{
-            Name:  "Вставить",
-            Param: []main.Statement{
-              "Оповещение",
-              main.VarStatement{
-                Name:  "Оповещение",
-                unary: false,
-                not:   false,
-              },
-            },
-          },
-          Call: main.VarStatement{
-            Name:  "Контекст",
-            unary: false,
-            not:   false,
-          },
-        },
-        main.ExpStatement{
-          Operation: 4,
-          Left:      main.VarStatement{
-            Name:  "ОписаниеОшибки",
-            unary: false,
-            not:   false,
-          },
-          Right: main.CallChainStatement{
-            Unit: main.MethodStatement{
-              Name:  "ПодставитьПараметрыВСтроку",
-              Param: []main.Statement{
-                main.MethodStatement{
-                  Name:  "НСтр",
-                  Param: []main.Statement{
-                    "ru = 'Не удалось перейти по ссылке \"\"%1\"\" по причине: \n\t\t\t           |Неверно задана навигационная ссылка.'",
-                  },
-                },
-                main.VarStatement{
-                  Name:  "НавигационнаяСсылка",
+1. Сделайте форк репозитория
+2. Создайте ветку для фичи (`git checkout -b feature/amazing-feature`)
+3. Закоммитьте изменения (`git commit -m 'feat: add amazing feature'`)
+4. Запушьте ветку (`git push origin feature/amazing-feature`)
+5. Откройте Pull Request
 
-                  unary: false,
-                  not:   false,
-                },
-              },
-            },
-            Call: main.VarStatement{
-              Name:  "СтроковыеФункцииКлиентСервер",
-              unary: false,
-              not:   false,
-            },
-          },
-          unary: false,
-          not:   false,
-        },
-        main.IfStatement{
-          Expression: main.CallChainStatement{
-            Unit: main.MethodStatement{
-              Name:  "ЭтоДопустимаяСсылка",
-              Param: []main.Statement{
-                main.VarStatement{
-                  Name:  "НавигационнаяСсылка",
-                  unary: false,
-                  not:   false,
-                },
-              },
-            },
-            Call: main.VarStatement{
-              Name:  "ОбщегоНазначенияСлужебныйКлиент",
-              unary: false,
-              not:   false,
-            },
-          },
-          TrueBlock: []main.Statement{
-            main.CallChainStatement{
-              Unit: main.MethodStatement{
-                Name:  "ОткрытьНавигационнуюСсылкуОповеститьОбОшибке",
-                Param: []main.Statement{
-                  main.VarStatement{
-                    Name:  "ОписаниеОшибки",
-                    unary: false,
-                    not:   false,
-                  },
-                  main.VarStatement{
-                    Name:  "Контекст",
-                    unary: false,
-                    not:   false,
-                  },
-                },
-              },
-              Call: main.VarStatement{
-                Name:  "ОбщегоНазначенияСлужебныйКлиент",
-                unary: false,
-                not:   false,
-              },
-            },
-            main.ReturnStatement{
-              Param: nil,
-            },
-          },
-          IfElseBlock: []*main.IfStatement{},
-          ElseBlock:   []main.Statement{},
-        },
-        main.IfStatement{
-          Expression: main.ExpStatement{
-            Operation: 11,
-            Left:      main.CallChainStatement{
-              Unit: main.MethodStatement{
-                Name:  "ЭтоВебСсылка",
-                Param: []main.Statement{
-                  main.VarStatement{
-                    Name:  "НавигационнаяСсылка",
-                    unary: false,
-                    not:   false,
-                  },
-                },
-              },
-              Call: main.VarStatement{
-                Name:  "ОбщегоНазначенияСлужебныйКлиент",
-                unary: false,
-                not:   false,
-              },
-            },
-            Right: main.CallChainStatement{
-              Unit: main.MethodStatement{
-                Name:  "ЭтоНавигационнаяСсылка",
-                Param: []main.Statement{
-                  main.VarStatement{
-                    Name:  "НавигационнаяСсылка",
-                    unary: false,
-                    not:   false,
-                  },
-                },
-              },
-              Call: main.VarStatement{
-                Name:  "ОбщегоНазначенияСлужебныйКлиент",
-                unary: false,
-                not:   false,
-              },
-            },
-            unary: false,
-            not:   false,
-          },
-          TrueBlock: []main.Statement{
-            main.TryStatement{
-              Body: []main.Statement{
-                main.ExpStatement{
-                  Operation: 4,
-                  Left:      main.VarStatement{
-                    Name:  "а",
-                    unary: false,
-                    not:   false,
-                  },
-                  Right: main.ExpStatement{
-                    Operation: 3,
-                    Left:      main.VarStatement{
-                      Name:  "а",
-                      unary: false,
-                      not:   false,
-                    },
-                    Right: 0.000000,
-                    unary: false,
-                    not:   false,
-                  },
-                  unary: false,
-                  not:   false,
-                },
-              },
-              Catch: []main.Statement{
-                main.CallChainStatement{
-                  Unit: main.MethodStatement{
-                    Name:  "ОткрытьНавигационнуюСсылкуОповеститьОбОшибке",
-                    Param: []main.Statement{
-                      main.VarStatement{
-                        Name:  "ОписаниеОшибки",
-                        unary: false,
-                        not:   false,
-                      },
-                      main.VarStatement{
-                        Name:  "Контекст",
-                        unary: false,
-                        not:   false,
-                      },
-                    },
-                  },
-                  Call: main.VarStatement{
-                    Name:  "ОбщегоНазначенияСлужебныйКлиент",
-                    unary: false,
-                    not:   false,
-                  },
-                },
-                main.ReturnStatement{
-                  Param: nil,
-                },
-              },
-            },
-            main.IfStatement{
-              Expression: main.ExpStatement{
-                Operation: 7,
-                Left:      main.VarStatement{
-                  Name:  "Оповещение",
-                  unary: false,
-                  not:   false,
-                },
-                Right: nil,
-                unary: false,
-                not:   false,
-              },
-              TrueBlock: []main.Statement{
-                main.ExpStatement{
-                  Operation: 4,
-                  Left:      main.VarStatement{
-                    Name:  "ПриложениеЗапущено",
-                    unary: false,
-                    not:   false,
-                  },
-                  Right: true,
-                  unary: false,
-                  not:   false,
-                },
-                main.MethodStatement{
-                  Name:  "ВыполнитьОбработкуОповещения",
-                  Param: []main.Statement{
-                    main.VarStatement{
-                      Name:  "Оповещение",
-                      unary: false,
-                      not:   false,
-                    },
-                    main.VarStatement{
-                      Name:  "ПриложениеЗапущено",
-                      unary: false,
-                      not:   false,
-                    },
-                  },
-                },
-              },
-              IfElseBlock: []*main.IfStatement{},
-              ElseBlock:   []main.Statement{},
-            },
-            main.ReturnStatement{
-              Param: nil,
-            },
-          },
-          IfElseBlock: []*main.IfStatement{},
-          ElseBlock:   []main.Statement{},
-        },
-        main.IfStatement{
-          Expression: main.CallChainStatement{
-            Unit: main.MethodStatement{
-              Name:  "ЭтоСсылкаНаСправку",
-              Param: []main.Statement{
-                main.VarStatement{
-                  Name:  "НавигационнаяСсылка",
-                  unary: false,
-                  not:   false,
-                },
-              },
-            },
-            Call: main.VarStatement{
-              Name:  "ОбщегоНазначенияСлужебныйКлиент",
-              unary: false,
-              not:   false,
-            },
-          },
-          TrueBlock: []main.Statement{
-            main.MethodStatement{
-              Name:  "ОткрытьСправку",
-              Param: []main.Statement{
-                main.VarStatement{
-                  Name:  "НавигационнаяСсылка",
-                  unary: false,
-                  not:   false,
-                },
-              },
-            },
-            main.ReturnStatement{
-              Param: nil,
-            },
-          },
-          IfElseBlock: []*main.IfStatement{},
-          ElseBlock:   []main.Statement{},
-        },
-      },
-      Export: true,
-      Params: []main.ParamStatement{
-        main.ParamStatement{
-          Name:    "НавигационнаяСсылка",
-          IsValue: false,
-          Default: nil,
-        },
-        main.ParamStatement{
-          Name:    "Оповещение",
-          IsValue: true,
-          Default: main.UndefinedStatement{},
-        },
-      },
-      Directive:         "",
-      ExplicitVariables: map[string]main.VarStatement{},
-    },
-  },
-}
-```
-</details>
+### Лицензия
 
-Если у вас возникнут проблемы или у вас есть предложения по улучшению, не стесняйтесь создать [issue](https://github.com/LazarenkoA/ast_parser_1c/issues). Также приветствуются ваши вклады!
+Проект распространяется под лицензией MIT — см. файл [LICENSE](LICENSE).
+
+### Благодарности
+
+- Оригинальный парсер: [LazarenkoA](https://github.com/LazarenkoA/1c-language-parser)
+- Грамматика основана на [документации 1С:Предприятие](https://its.1c.ru/)
+
