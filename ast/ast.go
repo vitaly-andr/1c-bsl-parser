@@ -29,6 +29,10 @@ var (
 )
 
 func NewAST(code string) *AstNode {
+	// Strip UTF-8 BOM if present
+	if len(code) >= 3 && code[0] == 0xEF && code[1] == 0xBB && code[2] == 0xBF {
+		code = code[3:]
+	}
 	return &AstNode{
 		code: code,
 	}
