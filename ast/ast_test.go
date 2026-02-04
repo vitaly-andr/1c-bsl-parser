@@ -2020,3 +2020,203 @@ func deleteEmptyLine(str string) string {
 
 	return strings.TrimSpace(result.String())
 }
+
+// TC-1: Test that ALL code from ALL preprocessor branches is parsed
+func TestParse_PreprocessorAllBranches(t *testing.T) {
+	code := `
+Процедура ОбычнаяПроцедура()
+    Перем а;
+    а = 1;
+КонецПроцедуры
+
+#Если Сервер Тогда
+
+Процедура СерверныйМетод() Экспорт
+    Возврат;
+КонецПроцедуры
+
+#Иначе
+
+Процедура КлиентскийМетод() Экспорт
+    Возврат;
+КонецПроцедуры
+
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 2, "Expected ОбычнаяПроцедура + PreprocessorIfStatement")
+
+	normalProc, ok := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, ok, "First item should be FunctionOrProcedure")
+	assert.Equal(t, "ОбычнаяПроцедура", normalProc.Name)
+
+	preproc, ok := a.ModuleStatement.Body[1].(*PreprocessorIfStatement)
+	assert.True(t, ok, "Second item should be PreprocessorIfStatement")
+	assert.Equal(t, "Сервер", preproc.Condition)
+
+	assert.Len(t, preproc.ThenBlock, 1, "ThenBlock should have 1 procedure")
+	serverProc, ok := preproc.ThenBlock[0].(*FunctionOrProcedure)
+	assert.True(t, ok)
+	assert.Equal(t, "СерверныйМетод", serverProc.Name)
+
+	assert.Len(t, preproc.ElseBlock, 1, "ElseBlock should have 1 procedure")
+	clientProc, ok := preproc.ElseBlock[0].(*FunctionOrProcedure)
+	assert.True(t, ok)
+	assert.Equal(t, "КлиентскийМетод", clientProc.Name)
+}
+
+// TC-3: Test nested preprocessor directives
+func TestParse_PreprocessorNested(t *testing.T) {
+	code := `
+#Если Сервер Тогда
+    #Если Не ВебКлиент Тогда
+
+    Функция ВложенныйСерверныйМетод() Экспорт
+        Возврат 1;
+    КонецФункции
+
+    #Иначе
+
+    Функция ВложенныйВебМетод() Экспорт
+        Возврат 2;
+    КонецФункции
+
+    #КонецЕсли
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1, "Expected 1 outer PreprocessorIfStatement")
+
+	outerPreproc, ok := a.ModuleStatement.Body[0].(*PreprocessorIfStatement)
+	if !assert.True(t, ok, "Expected PreprocessorIfStatement") {
+		return
+	}
+	assert.Equal(t, "Сервер", outerPreproc.Condition)
+
+	assert.Len(t, outerPreproc.ThenBlock, 1, "Expected 1 nested PreprocessorIfStatement")
+
+	innerPreproc, ok := outerPreproc.ThenBlock[0].(*PreprocessorIfStatement)
+	if !assert.True(t, ok, "Expected nested PreprocessorIfStatement") {
+		return
+	}
+	assert.Equal(t, "Не ВебКлиент", innerPreproc.Condition)
+
+	assert.Len(t, innerPreproc.ThenBlock, 1, "ThenBlock should have 1 function")
+	if fp, ok := innerPreproc.ThenBlock[0].(*FunctionOrProcedure); ok {
+		assert.Equal(t, "ВложенныйСерверныйМетод", fp.Name)
+	} else {
+		t.Error("ThenBlock[0] should be FunctionOrProcedure")
+	}
+
+	assert.Len(t, innerPreproc.ElseBlock, 1, "ElseBlock should have 1 function")
+	if fp, ok := innerPreproc.ElseBlock[0].(*FunctionOrProcedure); ok {
+		assert.Equal(t, "ВложенныйВебМетод", fp.Name)
+	} else {
+		t.Error("ElseBlock[0] should be FunctionOrProcedure")
+	}
+}
+
+// TC-4: Test #ИначеЕсли branches
+func TestParse_PreprocessorElseIf(t *testing.T) {
+	code := `
+#Если Сервер Тогда
+    Процедура СерверМетод()
+    КонецПроцедуры
+#ИначеЕсли Клиент Тогда
+    Процедура КлиентМетод()
+    КонецПроцедуры
+#ИначеЕсли ВебКлиент Тогда
+    Процедура ВебМетод()
+    КонецПроцедуры
+#Иначе
+    Процедура ПоУмолчанию()
+    КонецПроцедуры
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	preproc, ok := a.ModuleStatement.Body[0].(*PreprocessorIfStatement)
+	assert.True(t, ok)
+	assert.Equal(t, "Сервер", preproc.Condition)
+
+	assert.Len(t, preproc.ElseIfs, 2, "Should have 2 ElseIf branches")
+	assert.Equal(t, "Клиент", preproc.ElseIfs[0].Condition)
+	assert.Equal(t, "ВебКлиент", preproc.ElseIfs[1].Condition)
+
+	assert.Len(t, preproc.ElseBlock, 1, "Should have Else block")
+}
+
+// TC-5: Test #Область/#КонецОбласти
+func TestParse_Region(t *testing.T) {
+	code := `
+#Область ПрограммныйИнтерфейс
+
+Процедура ПубличнаяПроцедура() Экспорт
+    Возврат;
+КонецПроцедуры
+
+#КонецОбласти
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	region, ok := a.ModuleStatement.Body[0].(*RegionStatement)
+	assert.True(t, ok, "Expected RegionStatement")
+	assert.Equal(t, "ПрограммныйИнтерфейс", region.Name)
+
+	assert.Len(t, region.Body, 1, "Region should contain 1 procedure")
+	proc, ok := region.Body[0].(*FunctionOrProcedure)
+	assert.True(t, ok)
+	assert.Equal(t, "ПубличнаяПроцедура", proc.Name)
+}
+
+// TC-7: Test #Использовать directive (OneScript)
+func TestParse_UseDirective(t *testing.T) {
+	code := `
+Процедура Тест()
+КонецПроцедуры
+
+#Использовать lib
+#Использовать "./path/to/module"
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.GreaterOrEqual(t, len(a.ModuleStatement.Body), 3, "Should have procedure + 2 Use statements")
+
+	// First item is the procedure
+	_, ok := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, ok, "First item should be FunctionOrProcedure")
+
+	// Second item is first #Использовать
+	use1, ok := a.ModuleStatement.Body[1].(*UseStatement)
+	assert.True(t, ok, "Second item should be UseStatement")
+	assert.Equal(t, "lib", use1.Path)
+
+	// Third item is second #Использовать
+	use2, ok := a.ModuleStatement.Body[2].(*UseStatement)
+	assert.True(t, ok, "Third item should be UseStatement")
+	assert.Equal(t, "./path/to/module", use2.Path)
+}
