@@ -20,6 +20,11 @@ type astPrint struct {
 	conf PrintConf
 }
 
+// indent returns indentation string for given depth level
+func (p *astPrint) indent(depth int) string {
+	return strings.Repeat(" ", p.conf.Margin*depth)
+}
+
 func (ast *AstNode) Print(conf PrintConf) string {
 	if ast == nil {
 		return ""
@@ -217,8 +222,7 @@ func (p *astPrint) printBody(items Statements, depth int) string {
 func (p *astPrint) printBodyItem(item Statement, depth int) string {
 	builder := &strings.Builder{}
 
-	spaces := strings.Repeat(" ", p.conf.Margin*depth)
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 
 	switch v := item.(type) {
 	case *IfStatement:
@@ -266,7 +270,6 @@ func (p *astPrint) printBodyItem(item Statement, depth int) string {
 func (p *astPrint) printIfStatement(expr *IfStatement, depth int) string {
 	builder := &strings.Builder{}
 
-	spaces := strings.Repeat(" ", p.conf.Margin*depth)
 	builder.WriteString("Если ")
 	builder.WriteString(p.printExpression(expr.Expression, 0))
 	builder.WriteString(" Тогда ")
@@ -274,7 +277,7 @@ func (p *astPrint) printIfStatement(expr *IfStatement, depth int) string {
 	builder.WriteString(p.printBody(expr.TrueBlock, depth+1))
 
 	for _, item := range expr.IfElseBlock {
-		builder.WriteString(spaces)
+		builder.WriteString(p.indent(depth))
 		builder.WriteString("ИначеЕсли ")
 		builder.WriteString(p.printExpression(item.(*IfStatement).Expression, 0))
 		builder.WriteString(" Тогда ")
@@ -283,13 +286,13 @@ func (p *astPrint) printIfStatement(expr *IfStatement, depth int) string {
 	}
 
 	if expr.ElseBlock != nil {
-		builder.WriteString(spaces)
+		builder.WriteString(p.indent(depth))
 		builder.WriteString("Иначе ")
 		builder.WriteString(p.newLine(1))
 		builder.WriteString(p.printBody(expr.ElseBlock, depth+1))
 	}
 
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 	builder.WriteString("КонецЕсли")
 	return builder.String()
 }
@@ -297,7 +300,6 @@ func (p *astPrint) printIfStatement(expr *IfStatement, depth int) string {
 func (p *astPrint) printLoopStatement(loop *LoopStatement, depth int) string {
 	builder := &strings.Builder{}
 
-	spaces := strings.Repeat(" ", p.conf.Margin*depth)
 	if loop.WhileExpr != nil {
 		builder.WriteString("Пока ")
 		builder.WriteString(p.printExpression(loop.WhileExpr, 0))
@@ -322,7 +324,7 @@ func (p *astPrint) printLoopStatement(loop *LoopStatement, depth int) string {
 
 	builder.WriteString(p.newLine(1))
 	builder.WriteString(p.printBody(loop.Body, depth+1))
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 	builder.WriteString("КонецЦикла")
 
 	return builder.String()
@@ -405,7 +407,6 @@ func (p *astPrint) printCallChainStatement(call Statement) string {
 func (p *astPrint) printTryStatement(try TryStatement, depth int) string {
 	builder := &strings.Builder{}
 
-	spaces := strings.Repeat(" ", p.conf.Margin*depth)
 	builder.WriteString("Попытка")
 	builder.WriteString(p.newLine(1))
 
@@ -413,7 +414,7 @@ func (p *astPrint) printTryStatement(try TryStatement, depth int) string {
 		builder.WriteString(p.printBody(try.Body, depth+1))
 	}
 
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 	builder.WriteString("Исключение")
 	builder.WriteString(p.newLine(1))
 
@@ -421,7 +422,7 @@ func (p *astPrint) printTryStatement(try TryStatement, depth int) string {
 		builder.WriteString(p.printBody(try.Catch, depth+1))
 	}
 
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 	builder.WriteString("КонецПопытки")
 	return builder.String()
 }
@@ -429,11 +430,8 @@ func (p *astPrint) printTryStatement(try TryStatement, depth int) string {
 func (p *astPrint) printGoTo(gotoStat Statement, depth int) string {
 	builder := strings.Builder{}
 
-	// spaces := strings.Repeat(" ", p.conf.Margin*depth)
-
 	switch v := gotoStat.(type) {
 	case *GoToLabelStatement:
-		// builder.WriteString(spaces)
 		builder.WriteString("~")
 		builder.WriteString(v.Name)
 		builder.WriteString(":")
