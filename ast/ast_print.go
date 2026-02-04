@@ -20,6 +20,11 @@ type astPrint struct {
 	conf PrintConf
 }
 
+// indent returns indentation string for given depth level
+func (p *astPrint) indent(depth int) string {
+	return strings.Repeat(" ", p.conf.Margin*depth)
+}
+
 func (ast *AstNode) Print(conf PrintConf) string {
 	if ast == nil {
 		return ""
@@ -217,8 +222,7 @@ func (p *astPrint) printBody(items Statements, depth int) string {
 func (p *astPrint) printBodyItem(item Statement, depth int) string {
 	builder := &strings.Builder{}
 
-	spaces := strings.Repeat(" ", p.conf.Margin*depth)
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 
 	switch v := item.(type) {
 	case *IfStatement:
@@ -253,6 +257,15 @@ func (p *astPrint) printBodyItem(item Statement, depth int) string {
 	case GoToStatement, *GoToLabelStatement:
 		builder.WriteString(p.printGoTo(v, depth))
 		return builder.String()
+	case *PreprocessorIfStatement:
+		builder.WriteString(p.printPreprocessorIf(v, depth))
+		return builder.String()
+	case *RegionStatement:
+		builder.WriteString(p.printRegion(v, depth))
+		return builder.String()
+	case *UseStatement:
+		builder.WriteString(p.printUse(v))
+		return builder.String()
 	default:
 		builder.WriteString(p.printVarStatement(v))
 	}
@@ -266,7 +279,6 @@ func (p *astPrint) printBodyItem(item Statement, depth int) string {
 func (p *astPrint) printIfStatement(expr *IfStatement, depth int) string {
 	builder := &strings.Builder{}
 
-	spaces := strings.Repeat(" ", p.conf.Margin*depth)
 	builder.WriteString("Если ")
 	builder.WriteString(p.printExpression(expr.Expression, 0))
 	builder.WriteString(" Тогда ")
@@ -274,7 +286,7 @@ func (p *astPrint) printIfStatement(expr *IfStatement, depth int) string {
 	builder.WriteString(p.printBody(expr.TrueBlock, depth+1))
 
 	for _, item := range expr.IfElseBlock {
-		builder.WriteString(spaces)
+		builder.WriteString(p.indent(depth))
 		builder.WriteString("ИначеЕсли ")
 		builder.WriteString(p.printExpression(item.(*IfStatement).Expression, 0))
 		builder.WriteString(" Тогда ")
@@ -283,13 +295,13 @@ func (p *astPrint) printIfStatement(expr *IfStatement, depth int) string {
 	}
 
 	if expr.ElseBlock != nil {
-		builder.WriteString(spaces)
+		builder.WriteString(p.indent(depth))
 		builder.WriteString("Иначе ")
 		builder.WriteString(p.newLine(1))
 		builder.WriteString(p.printBody(expr.ElseBlock, depth+1))
 	}
 
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 	builder.WriteString("КонецЕсли")
 	return builder.String()
 }
@@ -297,7 +309,6 @@ func (p *astPrint) printIfStatement(expr *IfStatement, depth int) string {
 func (p *astPrint) printLoopStatement(loop *LoopStatement, depth int) string {
 	builder := &strings.Builder{}
 
-	spaces := strings.Repeat(" ", p.conf.Margin*depth)
 	if loop.WhileExpr != nil {
 		builder.WriteString("Пока ")
 		builder.WriteString(p.printExpression(loop.WhileExpr, 0))
@@ -322,7 +333,7 @@ func (p *astPrint) printLoopStatement(loop *LoopStatement, depth int) string {
 
 	builder.WriteString(p.newLine(1))
 	builder.WriteString(p.printBody(loop.Body, depth+1))
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 	builder.WriteString("КонецЦикла")
 
 	return builder.String()
@@ -393,7 +404,21 @@ func (p *astPrint) printCallChainStatement(call Statement) string {
 	switch v := call.(type) {
 	case CallChainStatement:
 		if v.Call != nil {
-			return p.printCallChainStatement(v.Call) + "." + p.printVarStatement(v.Unit)
+			prefix := p.printCallChainStatement(v.Call)
+			// ItemStatement (индексный доступ [0]) не требует точки перед собой
+			// Проверяем: Unit это ItemStatement напрямую, или Unit это CallChain начинающийся с ItemStatement
+			needsDot := true
+			if _, isItem := v.Unit.(ItemStatement); isItem {
+				needsDot = false
+			} else if chain, isChain := v.Unit.(CallChainStatement); isChain {
+				if _, isItem := chain.Call.(ItemStatement); isItem {
+					needsDot = false
+				}
+			}
+			if needsDot {
+				return prefix + "." + p.printVarStatement(v.Unit)
+			}
+			return prefix + p.printVarStatement(v.Unit)
 		}
 	case VarStatement, ItemStatement, MethodStatement:
 		return p.printVarStatement(call)
@@ -405,7 +430,6 @@ func (p *astPrint) printCallChainStatement(call Statement) string {
 func (p *astPrint) printTryStatement(try TryStatement, depth int) string {
 	builder := &strings.Builder{}
 
-	spaces := strings.Repeat(" ", p.conf.Margin*depth)
 	builder.WriteString("Попытка")
 	builder.WriteString(p.newLine(1))
 
@@ -413,7 +437,7 @@ func (p *astPrint) printTryStatement(try TryStatement, depth int) string {
 		builder.WriteString(p.printBody(try.Body, depth+1))
 	}
 
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 	builder.WriteString("Исключение")
 	builder.WriteString(p.newLine(1))
 
@@ -421,7 +445,7 @@ func (p *astPrint) printTryStatement(try TryStatement, depth int) string {
 		builder.WriteString(p.printBody(try.Catch, depth+1))
 	}
 
-	builder.WriteString(spaces)
+	builder.WriteString(p.indent(depth))
 	builder.WriteString("КонецПопытки")
 	return builder.String()
 }
@@ -429,11 +453,8 @@ func (p *astPrint) printTryStatement(try TryStatement, depth int) string {
 func (p *astPrint) printGoTo(gotoStat Statement, depth int) string {
 	builder := strings.Builder{}
 
-	// spaces := strings.Repeat(" ", p.conf.Margin*depth)
-
 	switch v := gotoStat.(type) {
 	case *GoToLabelStatement:
-		// builder.WriteString(spaces)
 		builder.WriteString("~")
 		builder.WriteString(v.Name)
 		builder.WriteString(":")
@@ -454,4 +475,83 @@ func (p *astPrint) newLine(count int) string {
 	}
 
 	return strings.Repeat("\n", count)
+}
+
+func (p *astPrint) printPreprocessorIf(preproc *PreprocessorIfStatement, depth int) string {
+	builder := &strings.Builder{}
+	spaces := p.indent(depth)
+
+	builder.WriteString("#Если ")
+	builder.WriteString(preproc.Condition)
+	builder.WriteString(" Тогда")
+	builder.WriteString(p.newLine(1))
+	builder.WriteString(p.printPreprocessorBody(preproc.ThenBlock, depth))
+
+	for _, elseif := range preproc.ElseIfs {
+		builder.WriteString(spaces)
+		builder.WriteString("#ИначеЕсли ")
+		builder.WriteString(elseif.Condition)
+		builder.WriteString(" Тогда")
+		builder.WriteString(p.newLine(1))
+		builder.WriteString(p.printPreprocessorBody(elseif.Block, depth))
+	}
+
+	if len(preproc.ElseBlock) > 0 {
+		builder.WriteString(spaces)
+		builder.WriteString("#Иначе")
+		builder.WriteString(p.newLine(1))
+		builder.WriteString(p.printPreprocessorBody(preproc.ElseBlock, depth))
+	}
+
+	builder.WriteString(spaces)
+	builder.WriteString("#КонецЕсли")
+	builder.WriteString(p.newLine(1))
+
+	return builder.String()
+}
+
+func (p *astPrint) printRegion(region *RegionStatement, depth int) string {
+	builder := &strings.Builder{}
+	spaces := p.indent(depth)
+
+	builder.WriteString("#Область ")
+	builder.WriteString(region.Name)
+	builder.WriteString(p.newLine(1))
+	builder.WriteString(p.printPreprocessorBody(region.Body, depth))
+	builder.WriteString(spaces)
+	builder.WriteString("#КонецОбласти")
+	builder.WriteString(p.newLine(1))
+
+	return builder.String()
+}
+
+func (p *astPrint) printUse(use *UseStatement) string {
+	builder := &strings.Builder{}
+
+	builder.WriteString("#Использовать ")
+	if strings.HasPrefix(use.Path, ".") || strings.HasPrefix(use.Path, "/") {
+		builder.WriteString("\"")
+		builder.WriteString(use.Path)
+		builder.WriteString("\"")
+	} else {
+		builder.WriteString(use.Path)
+	}
+	builder.WriteString(p.newLine(1))
+
+	return builder.String()
+}
+
+func (p *astPrint) printPreprocessorBody(items Statements, depth int) string {
+	builder := &strings.Builder{}
+
+	for _, item := range items {
+		if pf, ok := item.(*FunctionOrProcedure); ok {
+			builder.WriteString(p.printFunctionOrProcedure(pf))
+			builder.WriteString(p.newLine(2))
+		} else {
+			builder.WriteString(p.printBodyItem(item, depth))
+		}
+	}
+
+	return builder.String()
 }

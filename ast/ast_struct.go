@@ -84,6 +84,7 @@ type FunctionOrProcedure struct {
 	Params            []ParamStatement
 	Type              StatementType
 	Export            bool
+	Async             bool `json:"Async,omitempty"`
 }
 
 type ParamStatement struct {
@@ -126,7 +127,12 @@ type ThrowStatement struct {
 	Param Statement
 }
 
+type AwaitStatement struct {
+	Expr Statement
+}
+
 type UndefinedStatement struct{}
+type NullStatement struct{}
 
 type ReturnStatement struct {
 	Param Statement
@@ -317,9 +323,15 @@ func (m *ModuleStatement) Append(item Statement, yylex yyLexer) {
 	case Statements:
 		m.Body = append(m.Body, v...)
 	case *FunctionOrProcedure:
-		// если предыдущее выражение не процедура функция, то это значит что какой-то умник вначале или в середине модуля вставил какие-то выражения, а это нельзя. 1С разрешает выражения только в конце модуля
+		// если предыдущее выражение не процедура/функция и не препроцессорная конструкция,
+		// то это значит что какой-то умник вначале или в середине модуля вставил какие-то выражения, а это нельзя.
+		// 1С разрешает выражения только в конце модуля
 		if len(m.Body) > 0 {
-			if _, ok := m.Body[len(m.Body)-1].(*FunctionOrProcedure); !ok {
+			lastItem := m.Body[len(m.Body)-1]
+			switch lastItem.(type) {
+			case *FunctionOrProcedure, *PreprocessorIfStatement, *RegionStatement, *UseStatement:
+				// OK — функции, препроцессор и области могут идти перед функциями
+			default:
 				yylex.Error("procedure and function definitions should be placed before the module body statements")
 				return
 			}
@@ -364,8 +376,41 @@ func walkHelper(parent *FunctionOrProcedure, parentStm Statement, statements Sta
 			walkHelper(parent, v, Statements{v.ElseBlock}, callBack)
 		case *ReturnStatement:
 			walkHelper(parent, v, Statements{v.Param}, callBack)
+		case AwaitStatement:
+			walkHelper(parent, v, Statements{v.Expr}, callBack)
+		case *PreprocessorIfStatement:
+			walkHelper(parent, v, v.ThenBlock, callBack)
+			for i := range v.ElseIfs {
+				walkHelper(parent, v, v.ElseIfs[i].Block, callBack)
+			}
+			walkHelper(parent, v, v.ElseBlock, callBack)
+		case *RegionStatement:
+			walkHelper(parent, v, v.Body, callBack)
+		case *UseStatement:
+			// No children to walk
 		}
 
 		callBack(parent, &parentStm, &statements[i])
 	}
+}
+
+type PreprocessorIfStatement struct {
+	Condition string
+	ThenBlock Statements
+	ElseIfs   []PreprocessorElseIf
+	ElseBlock Statements
+}
+
+type PreprocessorElseIf struct {
+	Condition string
+	Block     Statements
+}
+
+type RegionStatement struct {
+	Name string
+	Body Statements
+}
+
+type UseStatement struct {
+	Path string
 }

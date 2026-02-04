@@ -22,17 +22,21 @@ type Position struct {
 }
 
 type Token struct {
-	ast      Iast
-	value    interface{}
-	literal  string
-	position Position
-	offset   int
-	prevDot  bool
+	ast           Iast
+	value         interface{}
+	literal       string
+	position      Position
+	offset        int
+	prevDot       bool
+	prevTokenType int // для определения начала statement (lookahead)
 }
 
 const (
 	EOL      = '\n' // end of line.
 	emptyLit = ""
+
+	// Buffer size hints for scanner operations
+	identifierBufSize = 10 // typical identifier length for pre-allocation
 )
 
 var (
@@ -68,10 +72,15 @@ var (
 		"или":               OR,
 		"истина":            True,
 		"ложь":              False,
-		"неопределено":      Undefind,
+		"неопределено":      Undefined,
+		"null":              Null,
 		"не":                Not,
 		"экспорт":           Export,
 		"выполнить":         Execute,
+		"асинх":             Async,
+		"async":             Async,
+		"ждать":             Await,
+		"await":             Await,
 		//"вычислить":         Eval,
 		// "массив":            Array,
 		// "структура":         Struct,
@@ -100,6 +109,9 @@ func (t *Token) Next(ast Iast) (token int, err error) {
 	t.ast = ast
 	token, t.literal, err = t.next()
 
+	// Сохраняем тип токена для определения начала statement
+	defer func() { t.prevTokenType = token }()
+
 	switch token {
 	case Number:
 		t.value, err = strconv.ParseFloat(t.literal, 64)
@@ -118,7 +130,7 @@ func (t *Token) Next(ast Iast) (token int, err error) {
 				break
 			}
 		}
-	case Undefind:
+	case Undefined:
 		t.value = nil
 	case True:
 		t.value = true
@@ -132,7 +144,11 @@ func (t *Token) Next(ast Iast) (token int, err error) {
 func (t *Token) next() (int, string, error) {
 	t.skipSpace()
 	t.skipComment()
-	t.skipRegions()
+
+	// Handle preprocessor directives (#Если, #Область, #Использовать)
+	if t.currentLet() == '#' {
+		return t.handlePreprocessor()
+	}
 
 	if t.prevDot {
 		defer func() { t.prevDot = false }()
@@ -145,9 +161,19 @@ func (t *Token) next() (int, string, error) {
 
 		if tName, ok := tokens[lowLit]; ok && !t.prevDot {
 			return tName, literal, nil
-		} else {
-			return token_identifier, literal, nil
 		}
+
+		// Для идентификаторов: определяем тип по контексту
+		// Если в начале statement — используем lookahead для различения lvalue/call
+		if t.atStatementStart() && !t.prevDot {
+			if t.hasEqualBeforeSemicolon() {
+				return LVALUE_IDENT, literal, nil
+			}
+			return CALL_IDENT, literal, nil
+		}
+
+		// Обычный идентификатор (в выражениях, после точки, и т.д.)
+		return token_identifier, literal, nil
 	case let == '.':
 		// если после точки у нас следует идентификатор то нам нужно читать его обычным идентификатором
 		// Могут быть таие случаи стр.Истина = 1 или стр.Функция = 2 (стр в данном случае какой-то объект, например структура)
@@ -251,7 +277,7 @@ func (t *Token) next() (int, string, error) {
 }
 
 func (t *Token) scanIdentifier() string {
-	ret := make([]rune, 0, 10) // как правило встречаются короткие идентификаторы и лучше предаллоцировать, это сильный буст дает
+	ret := make([]rune, 0, identifierBufSize) // pre-allocate for typical short identifiers
 
 	for {
 		let := t.currentLet()
@@ -328,29 +354,199 @@ func (t *Token) skipComment() {
 		return
 	}
 
-	// проверяем что на новой строке нет комментария или новой области, если есть, рекурсия
+	// проверяем что на новой строке нет комментария, если есть, рекурсия
+	// Примечание: #-директивы НЕ пропускаем — они обрабатываются в handlePreprocessor()
 	if cl := t.currentLet(); cl == '/' {
 		t.skipComment()
-	} else if cl := t.currentLet(); cl == '#' {
-		t.skipRegions()
 	}
 }
 
-func (t *Token) skipRegions() {
-	// todo пока будут пропускаться и условия типа #Если Не ВебКлиент Тогда, потом надо будет доработать
-	if t.currentLet() == '#' {
-		for ch := t.currentLet(); ch != EOL && ch != EOF; ch = t.currentLet() {
-			t.nextPos()
-		}
-		t.skipSpace()
+func (t *Token) handlePreprocessor() (int, string, error) {
+	if t.currentLet() != '#' {
+		return 0, "", nil
 	}
 
-	// проверяем что на новой строке нет комментария или новой области, если есть, рекурсия
-	if cl := t.currentLet(); cl == '/' {
-		t.skipComment()
-	} else if cl := t.currentLet(); cl == '#' {
-		t.skipRegions()
+	t.nextPos() // skip #
+	directive := t.scanIdentifier()
+	lowDirective := fastToLower(directive)
+
+	switch lowDirective {
+	case "если", "if":
+		condition := t.scanUntilThen()
+		return PreprocIf, condition, nil
+	case "иначеесли", "elseif":
+		condition := t.scanUntilThen()
+		return PreprocElseIf, condition, nil
+	case "иначе", "else":
+		t.skipToEOL()
+		return PreprocElse, "", nil
+	case "конецесли", "endif":
+		t.skipToEOL()
+		return PreprocEndIf, "", nil
+	case "область", "region":
+		name := t.scanRegionName()
+		return PreprocRegion, name, nil
+	case "конецобласти", "endregion":
+		t.skipToEOL()
+		return PreprocEndRegion, "", nil
+	case "использовать", "use":
+		path := t.scanUsePath()
+		return PreprocUse, path, nil
+	default:
+		t.skipToEOL()
+		return t.next()
 	}
+}
+
+// scanUntilThen сканирует условие препроцессора до ключевого слова Тогда/Then.
+func (t *Token) scanUntilThen() string {
+	var buf strings.Builder
+	for {
+		t.skipSpaceOnly()
+		ch := t.currentLet()
+		if ch == EOL || ch == EOF {
+			break
+		}
+
+		word := t.scanIdentifier()
+		if word == "" {
+			if ch == '(' || ch == ')' {
+				buf.WriteRune(ch)
+				t.nextPos()
+				continue
+			}
+			break
+		}
+
+		lowWord := fastToLower(word)
+		if lowWord == "тогда" || lowWord == "then" {
+			break
+		}
+
+		if buf.Len() > 0 {
+			buf.WriteRune(' ')
+		}
+		buf.WriteString(word)
+	}
+	return buf.String()
+}
+
+// scanRegionName сканирует имя области после #Область.
+func (t *Token) scanRegionName() string {
+	t.skipSpaceOnly()
+	return t.scanIdentifier()
+}
+
+// scanUsePath сканирует путь после #Использовать/#Use.
+func (t *Token) scanUsePath() string {
+	t.skipSpaceOnly()
+	if t.currentLet() == '"' {
+		path, _ := t.scanString('"')
+		return path
+	}
+	return t.scanIdentifier()
+}
+
+// skipToEOL пропускает все символы до конца строки.
+func (t *Token) skipToEOL() {
+	for ch := t.currentLet(); ch != EOL && ch != EOF; ch = t.currentLet() {
+		t.nextPos()
+	}
+}
+
+// skipSpaceOnly пропускает только пробелы и табы, но НЕ переводы строк.
+func (t *Token) skipSpaceOnly() {
+	for {
+		ch := t.currentLet()
+		if ch == ' ' || ch == '\t' {
+			t.nextPos()
+		} else {
+			break
+		}
+	}
+}
+
+// atStatementStart определяет, находимся ли мы в начале statement.
+// Используется для различения lvalue (присваивание) от call_stmt (вызов метода).
+func (t *Token) atStatementStart() bool {
+	switch t.prevTokenType {
+	// Токены, которые ПРОДОЛЖАЮТ выражение
+	case '.':
+		return false // после точки идёт свойство/метод
+	case '(':
+		return false // внутри скобок (аргументы, группировка)
+	case '[':
+		return false // внутри индекса
+	case ',':
+		return false // аргументы функции
+	case '+', '-', '*', '/', '%':
+		return false // арифметика
+	case '<', '>':
+		return false // сравнение
+	case EQUAL:
+		return false // присваивание или сравнение в выражении
+	case NeEQ, LE, GE:
+		return false // сравнение
+	case And, OR:
+		return false // логические операторы
+	case Not, Await:
+		return false // унарные операторы
+	case ValueParam:
+		return false // после Знач идёт имя параметра
+
+	// Токены, после которых идёт НЕ statement, а часть конструкции
+	case Procedure, Function, Async:
+		return false // после них идёт имя функции
+	case Var:
+		return false // после Var идёт имя переменной
+	case For:
+		return false // после For идёт переменная цикла или Each
+	case Each:
+		return false // после Each идёт переменная
+	case In, To:
+		return false // после In/To идёт выражение
+	case New:
+		return false // после New идёт тип
+	case GoTo:
+		return false // после GoTo идёт метка
+	case Return, Throw, Execute:
+		return false // после них идёт выражение или параметр
+	case If, ElseIf, While:
+		return false // после них идёт условие
+	}
+	// Для всех остальных (;, ), ], Then, Loop, Else, Catch, Try, identifiers, literals, etc.)
+	// предполагаем что это начало statement
+	return true
+}
+
+// hasEqualBeforeSemicolon сканирует вперёд и ищет одиночный "=" до ";".
+// Используется для различения lvalue (присваивание) от call_stmt (вызов метода).
+// Учитывает вложенность скобок — "=" внутри скобок игнорируется.
+func (t *Token) hasEqualBeforeSemicolon() bool {
+	srsCode := t.ast.SrsCode()
+	depth := 0
+	pos := t.offset
+
+	for pos < len(srsCode) {
+		ch, size := utf8.DecodeRuneInString(srsCode[pos:])
+		switch ch {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case '=':
+			// "=" на верхнем уровне вложенности = присваивание
+			// В 1С нет "==", поэтому любой "=" вне скобок — это присваивание
+			if depth == 0 {
+				return true
+			}
+		case ';', EOF:
+			return false // конец statement без "="
+		// '\n' НЕ останавливает поиск — в 1С statement может занимать несколько строк
+		}
+		pos += size
+	}
+	return false
 }
 
 func (t *Token) nextLet() rune {

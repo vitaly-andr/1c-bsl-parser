@@ -72,7 +72,9 @@ func TestParse2(t *testing.T) {
 	a := NewAST(code)
 	err := a.Parse()
 	assert.NoError(t, err)
-	assert.Nil(t, a.ModuleStatement.Body)
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	_, ok := a.ModuleStatement.Body[0].(*PreprocessorIfStatement)
+	assert.True(t, ok, "expected PreprocessorIfStatement")
 }
 
 func TestParse3(t *testing.T) {
@@ -2017,4 +2019,1418 @@ func deleteEmptyLine(str string) string {
 	}
 
 	return strings.TrimSpace(result.String())
+}
+
+// TC-1: Test that ALL code from ALL preprocessor branches is parsed
+func TestParse_PreprocessorAllBranches(t *testing.T) {
+	code := `
+Процедура ОбычнаяПроцедура()
+    Перем а;
+    а = 1;
+КонецПроцедуры
+
+#Если Сервер Тогда
+
+Процедура СерверныйМетод() Экспорт
+    Возврат;
+КонецПроцедуры
+
+#Иначе
+
+Процедура КлиентскийМетод() Экспорт
+    Возврат;
+КонецПроцедуры
+
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 2, "Expected ОбычнаяПроцедура + PreprocessorIfStatement")
+
+	normalProc, ok := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, ok, "First item should be FunctionOrProcedure")
+	assert.Equal(t, "ОбычнаяПроцедура", normalProc.Name)
+
+	preproc, ok := a.ModuleStatement.Body[1].(*PreprocessorIfStatement)
+	assert.True(t, ok, "Second item should be PreprocessorIfStatement")
+	assert.Equal(t, "Сервер", preproc.Condition)
+
+	assert.Len(t, preproc.ThenBlock, 1, "ThenBlock should have 1 procedure")
+	serverProc, ok := preproc.ThenBlock[0].(*FunctionOrProcedure)
+	assert.True(t, ok)
+	assert.Equal(t, "СерверныйМетод", serverProc.Name)
+
+	assert.Len(t, preproc.ElseBlock, 1, "ElseBlock should have 1 procedure")
+	clientProc, ok := preproc.ElseBlock[0].(*FunctionOrProcedure)
+	assert.True(t, ok)
+	assert.Equal(t, "КлиентскийМетод", clientProc.Name)
+}
+
+// TC-3: Test nested preprocessor directives
+func TestParse_PreprocessorNested(t *testing.T) {
+	code := `
+#Если Сервер Тогда
+    #Если Не ВебКлиент Тогда
+
+    Функция ВложенныйСерверныйМетод() Экспорт
+        Возврат 1;
+    КонецФункции
+
+    #Иначе
+
+    Функция ВложенныйВебМетод() Экспорт
+        Возврат 2;
+    КонецФункции
+
+    #КонецЕсли
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1, "Expected 1 outer PreprocessorIfStatement")
+
+	outerPreproc, ok := a.ModuleStatement.Body[0].(*PreprocessorIfStatement)
+	if !assert.True(t, ok, "Expected PreprocessorIfStatement") {
+		return
+	}
+	assert.Equal(t, "Сервер", outerPreproc.Condition)
+
+	assert.Len(t, outerPreproc.ThenBlock, 1, "Expected 1 nested PreprocessorIfStatement")
+
+	innerPreproc, ok := outerPreproc.ThenBlock[0].(*PreprocessorIfStatement)
+	if !assert.True(t, ok, "Expected nested PreprocessorIfStatement") {
+		return
+	}
+	assert.Equal(t, "Не ВебКлиент", innerPreproc.Condition)
+
+	assert.Len(t, innerPreproc.ThenBlock, 1, "ThenBlock should have 1 function")
+	if fp, ok := innerPreproc.ThenBlock[0].(*FunctionOrProcedure); ok {
+		assert.Equal(t, "ВложенныйСерверныйМетод", fp.Name)
+	} else {
+		t.Error("ThenBlock[0] should be FunctionOrProcedure")
+	}
+
+	assert.Len(t, innerPreproc.ElseBlock, 1, "ElseBlock should have 1 function")
+	if fp, ok := innerPreproc.ElseBlock[0].(*FunctionOrProcedure); ok {
+		assert.Equal(t, "ВложенныйВебМетод", fp.Name)
+	} else {
+		t.Error("ElseBlock[0] should be FunctionOrProcedure")
+	}
+}
+
+// TC-4: Test #ИначеЕсли branches
+func TestParse_PreprocessorElseIf(t *testing.T) {
+	code := `
+#Если Сервер Тогда
+    Процедура СерверМетод()
+    КонецПроцедуры
+#ИначеЕсли Клиент Тогда
+    Процедура КлиентМетод()
+    КонецПроцедуры
+#ИначеЕсли ВебКлиент Тогда
+    Процедура ВебМетод()
+    КонецПроцедуры
+#Иначе
+    Процедура ПоУмолчанию()
+    КонецПроцедуры
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	preproc, ok := a.ModuleStatement.Body[0].(*PreprocessorIfStatement)
+	assert.True(t, ok)
+	assert.Equal(t, "Сервер", preproc.Condition)
+
+	assert.Len(t, preproc.ElseIfs, 2, "Should have 2 ElseIf branches")
+	assert.Equal(t, "Клиент", preproc.ElseIfs[0].Condition)
+	assert.Equal(t, "ВебКлиент", preproc.ElseIfs[1].Condition)
+
+	assert.Len(t, preproc.ElseBlock, 1, "Should have Else block")
+}
+
+// TC-5: Test #Область/#КонецОбласти
+func TestParse_Region(t *testing.T) {
+	code := `
+#Область ПрограммныйИнтерфейс
+
+Процедура ПубличнаяПроцедура() Экспорт
+    Возврат;
+КонецПроцедуры
+
+#КонецОбласти
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	region, ok := a.ModuleStatement.Body[0].(*RegionStatement)
+	assert.True(t, ok, "Expected RegionStatement")
+	assert.Equal(t, "ПрограммныйИнтерфейс", region.Name)
+
+	assert.Len(t, region.Body, 1, "Region should contain 1 procedure")
+	proc, ok := region.Body[0].(*FunctionOrProcedure)
+	assert.True(t, ok)
+	assert.Equal(t, "ПубличнаяПроцедура", proc.Name)
+}
+
+// TC-7: Test #Использовать directive (OneScript)
+func TestParse_UseDirective(t *testing.T) {
+	code := `
+Процедура Тест()
+КонецПроцедуры
+
+#Использовать lib
+#Использовать "./path/to/module"
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.GreaterOrEqual(t, len(a.ModuleStatement.Body), 3, "Should have procedure + 2 Use statements")
+
+	// First item is the procedure
+	_, ok := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, ok, "First item should be FunctionOrProcedure")
+
+	// Second item is first #Использовать
+	use1, ok := a.ModuleStatement.Body[1].(*UseStatement)
+	assert.True(t, ok, "Second item should be UseStatement")
+	assert.Equal(t, "lib", use1.Path)
+
+	// Third item is second #Использовать
+	use2, ok := a.ModuleStatement.Body[2].(*UseStatement)
+	assert.True(t, ok, "Third item should be UseStatement")
+	assert.Equal(t, "./path/to/module", use2.Path)
+}
+
+// TC-8: Test async function (Russian keyword)
+func TestParse_AsyncFunction(t *testing.T) {
+	code := `
+Асинх Функция ПолучитьДанныеАсинхронно(Параметр) Экспорт
+    Результат = Ждать ВыполнитьЗапрос(Параметр);
+    Возврат Результат;
+КонецФункции
+
+Функция СинхронныйМетод() Экспорт
+    Возврат 1;
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 2, "Expected 2 functions")
+
+	// Check async flag
+	for _, stmt := range a.ModuleStatement.Body {
+		if fp, ok := stmt.(*FunctionOrProcedure); ok {
+			if fp.Name == "ПолучитьДанныеАсинхронно" {
+				assert.True(t, fp.Async, "ПолучитьДанныеАсинхронно should have Async=true")
+				assert.True(t, fp.Export, "ПолучитьДанныеАсинхронно should have Export=true")
+			} else if fp.Name == "СинхронныйМетод" {
+				assert.False(t, fp.Async, "СинхронныйМетод should have Async=false")
+			}
+		}
+	}
+}
+
+// TC-9: Test async procedure (Russian keyword)
+func TestParse_AsyncProcedure(t *testing.T) {
+	code := `
+Асинх Процедура ОбработатьДанныеАсинхронно() Экспорт
+    Данные = Ждать ЗагрузитьДанные();
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1, "Expected 1 procedure")
+
+	fp, ok := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, ok, "Expected FunctionOrProcedure")
+	assert.Equal(t, "ОбработатьДанныеАсинхронно", fp.Name)
+	assert.True(t, fp.Async, "Should have Async=true")
+	assert.Equal(t, PFTypeProcedure, fp.Type, "Should be Procedure")
+}
+
+// TC-10: Test async with English keyword
+func TestParse_AsyncEnglishKeyword(t *testing.T) {
+	code := `
+async Функция GetDataAsync(Param) Экспорт
+    Возврат 1;
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	fp := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, fp.Async, "async keyword should set Async=true")
+}
+
+// TC-11: Test async with directives
+func TestParse_AsyncWithDirectives(t *testing.T) {
+	code := `
+&НаСервере
+Асинх Функция СерверныйАсинхМетод()
+    Возврат Ждать Запрос();
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	fp := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, fp.Async, "Should have Async=true")
+	assert.NotNil(t, fp.Directives, "Should have directives")
+	assert.Len(t, fp.Directives, 1)
+	assert.Equal(t, "&НаСервере", fp.Directives[0].Name)
+}
+
+// TC-12: Test await expression
+func TestParse_AwaitExpression(t *testing.T) {
+	code := `
+Асинх Функция Тест()
+    а = Ждать Метод();
+    б = 1 + Ждать Другой();
+    Возврат Ждать Третий();
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	fp := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, fp.Async)
+	// The body should contain assignments and return with await
+	assert.GreaterOrEqual(t, len(fp.Body), 3, "Should have at least 3 statements")
+}
+
+// TestOperationType_String tests OperationType.String() for all operation types
+func TestOperationType_String(t *testing.T) {
+	tests := []struct {
+		op       OperationType
+		expected string
+	}{
+		{OpPlus, "+"},
+		{OpMinus, "-"},
+		{OpMul, "*"},
+		{OpDiv, "/"},
+		{OpEq, "="},
+		{OpGt, ">"},
+		{OpLt, "<"},
+		{OpNe, "<>"},
+		{OpLe, "<="},
+		{OpGe, ">="},
+		{OpMod, "%"},
+		{OpOr, "ИЛИ"},
+		{OpAnd, "И"},
+		{OpUndefined, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.op.String())
+		})
+	}
+}
+
+// TestWalkHelper_TryCatch tests walkHelper with Try/Catch statements
+func TestWalkHelper_TryCatch(t *testing.T) {
+	code := `
+Процедура Тест()
+    Попытка
+        а = 1;
+    Исключение
+        б = 2;
+    КонецПопытки
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+
+	var statements []Statement
+	a.ModuleStatement.Walk(func(root *FunctionOrProcedure, parentStm, stm *Statement) {
+		statements = append(statements, *stm)
+	})
+	// Should walk: FunctionOrProcedure, TryStatement body, TryStatement catch, assignments
+	assert.GreaterOrEqual(t, len(statements), 3)
+}
+
+// TestWalkHelper_Ternary tests walkHelper with ternary operator
+func TestWalkHelper_Ternary(t *testing.T) {
+	code := `
+Функция Тест()
+    Возврат ?(а > 0, 1, 2);
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+
+	var statements []Statement
+	a.ModuleStatement.Walk(func(root *FunctionOrProcedure, parentStm, stm *Statement) {
+		statements = append(statements, *stm)
+	})
+	assert.GreaterOrEqual(t, len(statements), 1)
+}
+
+// TestWalkHelper_MethodStatement tests walkHelper with method calls
+func TestWalkHelper_MethodStatement(t *testing.T) {
+	code := `
+Процедура Тест()
+    Объект.Метод(1, 2, 3);
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+
+	var statements []Statement
+	a.ModuleStatement.Walk(func(root *FunctionOrProcedure, parentStm, stm *Statement) {
+		statements = append(statements, *stm)
+	})
+	assert.GreaterOrEqual(t, len(statements), 1)
+}
+
+// TestWalkHelper_PreprocessorUse tests walkHelper with #Use directive
+func TestWalkHelper_PreprocessorUse(t *testing.T) {
+	code := `
+#Использовать lib
+Процедура Тест()
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+
+	var useFound bool
+	a.ModuleStatement.Walk(func(root *FunctionOrProcedure, parentStm, stm *Statement) {
+		if _, ok := (*stm).(*UseStatement); ok {
+			useFound = true
+		}
+	})
+	assert.True(t, useFound)
+}
+
+// TestModuleAppend_VariableAfterBody tests error when variable declared after body
+func TestModuleAppend_VariableAfterBody(t *testing.T) {
+	code := `
+Процедура Тест()
+КонецПроцедуры
+Перем а;
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "variable declarations must be placed at the beginning")
+}
+
+// TestModuleAppend_FunctionAfterBody tests error when function after non-function body
+func TestModuleAppend_FunctionAfterBody(t *testing.T) {
+	// In 1C, expressions at module level must come AFTER procedures/functions
+	// Grammar catches this as syntax error before Append() check runs
+	code := `
+а = 1;
+Процедура Тест()
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.Error(t, err) // syntax error - invalid structure rejected
+}
+
+// TestModuleAppend_DuplicateVariable tests error for duplicate global variable
+func TestModuleAppend_DuplicateVariable(t *testing.T) {
+	code := `
+Перем а;
+Перем а;
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "already been defined")
+}
+
+// TestCallChainStatement_IsMethod tests IsMethod for call chains
+func TestCallChainStatement_IsMethod(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = Объект.Метод();
+    б = Объект.Свойство;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+
+	fp := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	// First statement: assignment with method call
+	assign1 := fp.Body[0].(AssignmentStatement)
+	if chain, ok := assign1.Expr.Statements[0].(CallChainStatement); ok {
+		assert.True(t, chain.IsMethod())
+	}
+}
+
+// TestFastToLower tests fastToLower function
+func TestFastToLower(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"Russian uppercase", "ПРИВЕТ", "привет"},
+		{"Russian mixed", "ПрИвЕт", "привет"},
+		{"English uppercase", "HELLO", "hello"},
+		{"English mixed", "HeLLo", "hello"},
+		{"Mixed Russian English", "ПриветHELLO", "приветhello"},
+		{"With Ё", "ЁЛКА", "ёлка"},
+		{"Already lowercase", "привет", "привет"},
+		{"Numbers unchanged", "123", "123"},
+		{"Empty string", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, fastToLower(tt.input))
+		})
+	}
+}
+
+// TestCharacterClassification tests isLetter, isDigit, isSpace
+func TestCharacterClassification(t *testing.T) {
+	t.Run("isLetter", func(t *testing.T) {
+		// Should return true
+		assert.True(t, isLetter('a'))
+		assert.True(t, isLetter('Z'))
+		assert.True(t, isLetter('а'))
+		assert.True(t, isLetter('Я'))
+		assert.True(t, isLetter('ё'))
+		assert.True(t, isLetter('Ё'))
+		assert.True(t, isLetter('_'))
+		// Should return false
+		assert.False(t, isLetter('1'))
+		assert.False(t, isLetter(' '))
+		assert.False(t, isLetter('.'))
+	})
+
+	t.Run("isDigit", func(t *testing.T) {
+		assert.True(t, isDigit('0'))
+		assert.True(t, isDigit('5'))
+		assert.True(t, isDigit('9'))
+		assert.False(t, isDigit('a'))
+		assert.False(t, isDigit(' '))
+	})
+
+	t.Run("isSpace", func(t *testing.T) {
+		assert.True(t, isSpace(' '))
+		assert.True(t, isSpace('\t'))
+		assert.True(t, isSpace('\n'))
+		assert.True(t, isSpace('\r'))
+		assert.False(t, isSpace('a'))
+		assert.False(t, isSpace('1'))
+	})
+}
+
+// TestParamStatement_Fill tests ParamStatement.Fill method
+func TestParamStatement_Fill(t *testing.T) {
+	t.Run("with value param", func(t *testing.T) {
+		p := &ParamStatement{}
+		tok := Token{literal: "param1"}
+		valTok := &Token{literal: "Знач"}
+		p.Fill(valTok, tok)
+		assert.True(t, p.IsValue)
+		assert.Equal(t, "param1", p.Name)
+	})
+
+	t.Run("without value param", func(t *testing.T) {
+		p := &ParamStatement{}
+		tok := Token{literal: "param2"}
+		p.Fill(nil, tok)
+		assert.False(t, p.IsValue)
+		assert.Equal(t, "param2", p.Name)
+	})
+}
+
+// TestParamStatement_DefaultValue tests ParamStatement.DefaultValue method
+func TestParamStatement_DefaultValue(t *testing.T) {
+	t.Run("nil value", func(t *testing.T) {
+		p := &ParamStatement{}
+		p.DefaultValue(nil)
+		_, ok := p.Default.(UndefinedStatement)
+		assert.True(t, ok)
+	})
+
+	t.Run("with value", func(t *testing.T) {
+		p := &ParamStatement{}
+		p.DefaultValue(VarStatement{Name: "test"})
+		_, ok := p.Default.(VarStatement)
+		assert.True(t, ok)
+	})
+}
+
+// TestUnaryMinus tests unaryMinus function with various types
+func TestUnaryMinus(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		expected interface{}
+	}{
+		{"int", 5, -5},
+		{"int32", int32(10), int32(-10)},
+		{"int64", int64(20), int64(-20)},
+		{"float32", float32(1.5), float32(-1.5)},
+		{"float64", 2.5, -2.5},
+		{"string unchanged", "test", "test"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, unaryMinus(tt.input))
+		})
+	}
+}
+
+// TestNot tests not function with various types
+func TestNot(t *testing.T) {
+	t.Run("bool true", func(t *testing.T) {
+		assert.Equal(t, false, not(true))
+	})
+	t.Run("bool false", func(t *testing.T) {
+		assert.Equal(t, true, not(false))
+	})
+	t.Run("string unchanged", func(t *testing.T) {
+		assert.Equal(t, "test", not("test"))
+	})
+}
+
+// TestNewObjectStatement_Params tests NewObjectStatement.Params method
+func TestNewObjectStatement_Params(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = Новый Структура("ключ", значение);
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// TestMethodStatement_Params tests MethodStatement.Params method
+func TestMethodStatement_Params(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = Объект.Метод(1, 2);
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// TestPrint_BreakContinue tests printing Break and Continue statements
+func TestPrint_BreakContinue(t *testing.T) {
+	code := `
+Процедура Тест()
+    Для а = 1 По 10 Цикл
+        Если а = 5 Тогда
+            Прервать;
+        КонецЕсли;
+        Если а = 3 Тогда
+            Продолжить;
+        КонецЕсли;
+    КонецЦикла;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Прервать")
+	assert.Contains(t, printed, "Продолжить")
+}
+
+// TestPrint_ThrowStatement tests printing Throw statement
+func TestPrint_ThrowStatement(t *testing.T) {
+	code := `
+Процедура Тест()
+    Попытка
+        а = 1;
+    Исключение
+        ВызватьИсключение;
+    КонецПопытки;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "ВызватьИсключение")
+}
+
+// TestPrint_ThrowWithParam tests printing Throw with parameter
+func TestPrint_ThrowWithParam(t *testing.T) {
+	code := `
+Процедура Тест()
+    ВызватьИсключение "Ошибка";
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "ВызватьИсключение")
+}
+
+// TestPrint_GoTo tests printing GoTo statement
+func TestPrint_GoTo(t *testing.T) {
+	code := `
+Процедура Тест()
+    Перейти ~метка;
+    ~метка:
+    а = 1;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "метка")
+}
+
+// TestPrint_GlobalVariables tests printing global variables
+func TestPrint_GlobalVariables(t *testing.T) {
+	code := `
+Перем а;
+Перем б Экспорт;
+Процедура Тест()
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Перем")
+}
+
+// TestPrint_GlobalVariablesWithDirective tests printing global variables with directive
+func TestPrint_GlobalVariablesWithDirective(t *testing.T) {
+	code := `
+&НаСервере
+Перем а;
+Процедура Тест()
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Перем")
+	assert.Contains(t, printed, "НаСервере")
+}
+
+// TestPrint_FunctionWithParams tests printing function with parameters
+func TestPrint_FunctionWithParams(t *testing.T) {
+	code := `
+Функция Тест(а, Знач б, в = 1)
+    Возврат а + б + в;
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Знач")
+	assert.Contains(t, printed, "Возврат")
+}
+
+// TestPrint_WhileLoop tests printing While loop
+func TestPrint_WhileLoop(t *testing.T) {
+	code := `
+Процедура Тест()
+    Пока а < 10 Цикл
+        а = а + 1;
+    КонецЦикла;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Пока")
+	assert.Contains(t, printed, "Цикл")
+}
+
+// TestPrint_ForEachLoop tests printing ForEach loop
+func TestPrint_ForEachLoop(t *testing.T) {
+	code := `
+Процедура Тест()
+    Для Каждого элемент Из Коллекция Цикл
+        а = элемент;
+    КонецЦикла;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Каждого")
+	assert.Contains(t, printed, "Из")
+}
+
+// TestPrint_TernaryOperator tests printing ternary operator
+func TestPrint_TernaryOperator(t *testing.T) {
+	code := `
+Функция Тест()
+    а = ?(б > 0, 1, 2);
+    Возврат а;
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "?(")
+}
+
+// TestPrint_NewObject tests printing New object creation
+func TestPrint_NewObject(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = Новый Массив();
+    б = Новый Структура("ключ", значение);
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Новый")
+}
+
+// TestPrint_ItemStatement tests printing array/map access
+func TestPrint_ItemStatement(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = Массив[0];
+    б = Структура["ключ"];
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "[")
+	assert.Contains(t, printed, "]")
+}
+
+// TestPrint_PreprocessorIf tests printing preprocessor if
+func TestPrint_PreprocessorIf(t *testing.T) {
+	code := `
+#Если Сервер Тогда
+    Процедура Тест()
+    КонецПроцедуры
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "#Если")
+	assert.Contains(t, printed, "#КонецЕсли")
+}
+
+// TestPrint_Region tests printing region
+func TestPrint_Region(t *testing.T) {
+	code := `
+#Область ТестоваяОбласть
+    Процедура Тест()
+    КонецПроцедуры
+#КонецОбласти
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "#Область")
+	assert.Contains(t, printed, "#КонецОбласти")
+}
+
+// TestPrint_Use tests printing use directive
+func TestPrint_Use(t *testing.T) {
+	code := `
+#Использовать lib
+Процедура Тест()
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "#Использовать")
+}
+
+// TestPrint_NotExpression tests printing Not expression
+func TestPrint_NotExpression(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = Не б;
+    в = Не (г И д);
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Не")
+}
+
+// TestPrint_ExtDirective tests printing extension directive
+func TestPrint_ExtDirective(t *testing.T) {
+	code := `
+&Вместо("ОригинальнаяПроцедура")
+Процедура ПереопределённаяПроцедура()
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "&Вместо")
+}
+
+// TestPrint_NilAST tests Print with nil AST
+func TestPrint_NilAST(t *testing.T) {
+	var a *AstNode = nil
+	result := a.Print(PrintConf{})
+	assert.Equal(t, "", result)
+}
+
+// TestPrintStatement_Nil tests PrintStatement with nil
+func TestPrintStatement_Nil(t *testing.T) {
+	a := NewAST("")
+	result := a.PrintStatement(nil)
+	assert.Equal(t, "", result)
+}
+
+// TestPrintStatementWithConf_Nil tests PrintStatementWithConf with nil
+func TestPrintStatementWithConf_Nil(t *testing.T) {
+	a := NewAST("")
+	result := a.PrintStatementWithConf(nil, PrintConf{})
+	assert.Equal(t, "", result)
+}
+
+// TestIsDigit tests IsDigit function
+func TestIsDigit(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"all digits", "12345", true},
+		{"single digit", "0", true},
+		{"empty string", "", true}, // vacuously true
+		{"with letter", "123a", false},
+		{"with space", "12 34", false},
+		{"only letters", "abc", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, IsDigit(tt.input))
+		})
+	}
+}
+
+// TestFastToLower_EdgeCases tests fastToLower with edge cases
+func TestFastToLower_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"Ё uppercase", "ЁЛКА", "ёлка"},
+		{"Ё in middle", "ПОДЪЁМ", "подъём"},
+		{"Russian after П", "РСТУФХЦЧШЩ", "рстуфхцчшщ"},
+		{"Mixed with Ё", "ЁЖ", "ёж"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, fastToLower(tt.input))
+		})
+	}
+}
+
+// TestFastToLower_Old tests the old fastToLower implementation
+func TestFastToLower_Old(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"Russian uppercase", "ПРИВЕТ", "привет"},
+		{"English uppercase", "HELLO", "hello"},
+		{"With Ё", "ЁЛКА", "ёлка"},
+		{"Mixed", "ПриВЕТ", "привет"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, fastToLower_old(tt.input))
+		})
+	}
+}
+
+// TestSyntaxError_UnknownCharacter tests error for unknown characters
+func TestSyntaxError_UnknownCharacter(t *testing.T) {
+	// Character that's not recognized by the lexer
+	code := "Процедура Тест()\n    § = 1;\nКонецПроцедуры"
+	a := NewAST(code)
+	err := a.Parse()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "syntax error")
+}
+
+// TestDateLiteral_ScanError tests error in date literal scanning
+func TestDateLiteral_ScanError(t *testing.T) {
+	// Unclosed date literal
+	code := "а = '20240101"
+	a := NewAST(code)
+	err := a.Parse()
+	assert.Error(t, err)
+}
+
+// TestPreprocessor_UnknownDirective tests unknown preprocessor directive
+func TestPreprocessor_UnknownDirective(t *testing.T) {
+	// Unknown preprocessor directive should be skipped
+	code := `
+#НеизвестнаяДиректива
+Процедура Тест()
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err) // Unknown directives are skipped
+}
+
+// TestPreprocessor_ConditionWithParens tests preprocessor with parentheses in condition
+func TestPreprocessor_ConditionWithParens(t *testing.T) {
+	code := `
+#Если (Сервер Или Клиент) И Не ВебКлиент Тогда
+    Процедура Тест()
+    КонецПроцедуры
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// TestPreprocessor_UseWithQuotedPath tests #Use with quoted path
+func TestPreprocessor_UseWithQuotedPath(t *testing.T) {
+	code := `
+#Использовать "./lib/module"
+Процедура Тест()
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// TestUnaryMinus_Expression tests unary minus with expressions
+func TestUnaryMinus_Expression(t *testing.T) {
+	code := `
+Функция Тест()
+    а = -(б + в);
+    б = -Объект.Метод();
+    в = -Массив[0];
+    Возврат -1;
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "-")
+}
+
+// TestWalkHelper_IfElseBlock tests walkHelper with ElseIf blocks
+func TestWalkHelper_IfElseBlock(t *testing.T) {
+	code := `
+Процедура Тест()
+    Если а = 1 Тогда
+        б = 1;
+    ИначеЕсли а = 2 Тогда
+        б = 2;
+    ИначеЕсли а = 3 Тогда
+        б = 3;
+    Иначе
+        б = 0;
+    КонецЕсли;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+
+	var count int
+	a.ModuleStatement.Walk(func(root *FunctionOrProcedure, parentStm, stm *Statement) {
+		count++
+	})
+	assert.GreaterOrEqual(t, count, 5) // Multiple statements including ElseIf blocks
+}
+
+// TestWalkHelper_ExpStatement tests walkHelper with ExpStatement
+func TestWalkHelper_ExpStatement(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = (б + в) * (г - д);
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+
+	var stmtCount int
+	a.ModuleStatement.Walk(func(root *FunctionOrProcedure, parentStm, stm *Statement) {
+		stmtCount++
+	})
+	// Should walk multiple statements including the expression parts
+	assert.GreaterOrEqual(t, stmtCount, 1)
+}
+
+// TestWalkHelper_PreprocessorElseIf tests walkHelper with preprocessor ElseIf
+func TestWalkHelper_PreprocessorElseIf(t *testing.T) {
+	code := `
+#Если Сервер Тогда
+    Процедура Тест1()
+    КонецПроцедуры
+#ИначеЕсли Клиент Тогда
+    Процедура Тест2()
+    КонецПроцедуры
+#ИначеЕсли ВнешнееСоединение Тогда
+    Процедура Тест3()
+    КонецПроцедуры
+#Иначе
+    Процедура Тест4()
+    КонецПроцедуры
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+
+	var funcCount int
+	a.ModuleStatement.Walk(func(root *FunctionOrProcedure, parentStm, stm *Statement) {
+		if _, ok := (*stm).(*FunctionOrProcedure); ok {
+			funcCount++
+		}
+	})
+	assert.Equal(t, 4, funcCount)
+}
+
+// TestCallChainStatement_Not tests Not method on CallChainStatement
+func TestCallChainStatement_Not(t *testing.T) {
+	code := `
+Процедура Тест()
+    Если Не Объект.Метод() Тогда
+        а = 1;
+    КонецЕсли;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Не")
+}
+
+// TestMethodStatement_Not tests Not method on MethodStatement
+func TestMethodStatement_Not(t *testing.T) {
+	code := `
+Процедура Тест()
+    Если Не Метод(а, б) Тогда
+        в = 1;
+    КонецЕсли;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// TestVarStatement_UnaryMinus tests UnaryMinus method on VarStatement
+func TestVarStatement_UnaryMinus(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = -б;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// TestVarStatement_Not tests Not method on VarStatement
+func TestVarStatement_Not(t *testing.T) {
+	code := `
+Процедура Тест()
+    Если Не а Тогда
+        б = 1;
+    КонецЕсли;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// TestExprStatements_Not tests Not method on ExprStatements
+func TestExprStatements_Not(t *testing.T) {
+	code := `
+Процедура Тест()
+    Если Не (а И б) Тогда
+        в = 1;
+    КонецЕсли;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// TestPrint_IfElseIfBlock tests printing If with ElseIf blocks
+func TestPrint_IfElseIfBlock(t *testing.T) {
+	code := `
+Процедура Тест()
+    Если а = 1 Тогда
+        б = 1;
+    ИначеЕсли а = 2 Тогда
+        б = 2;
+    ИначеЕсли а = 3 Тогда
+        б = 3;
+    Иначе
+        б = 0;
+    КонецЕсли;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "ИначеЕсли")
+	assert.Contains(t, printed, "Иначе")
+}
+
+// TestPrint_EmptyModule tests Print on empty module body
+func TestPrint_EmptyModule(t *testing.T) {
+	// Module with ONLY global variables and NO procedures/functions
+	// has empty Body, so print() returns "" for the body part
+	code := `Перем а;`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	// Verify global variable was parsed
+	assert.Len(t, a.ModuleStatement.GlobalVariables, 1)
+	// Body is empty since there are no functions
+	assert.Len(t, a.ModuleStatement.Body, 0)
+}
+
+// TestPrintStatementWithConf_NonFunction tests PrintStatementWithConf with non-function statement
+func TestPrintStatementWithConf_NonFunction(t *testing.T) {
+	code := `
+Процедура Тест()
+    Если а = 1 Тогда
+        б = 1;
+    КонецЕсли;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+
+	// Get the if statement from inside the procedure
+	fp := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	ifStmt := fp.Body[0]
+	printed := a.PrintStatementWithConf(ifStmt, PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Если")
+}
+
+// TestPrint_PreprocessorElseIf tests printing preprocessor with ElseIf
+func TestPrint_PreprocessorElseIf(t *testing.T) {
+	code := `
+#Если Сервер Тогда
+    Процедура Тест1()
+    КонецПроцедуры
+#ИначеЕсли Клиент Тогда
+    Процедура Тест2()
+    КонецПроцедуры
+#Иначе
+    Процедура Тест3()
+    КонецПроцедуры
+#КонецЕсли
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "#ИначеЕсли")
+	assert.Contains(t, printed, "#Иначе")
+}
+
+// TestPrint_LoopForTo tests printing For..To loop
+func TestPrint_LoopForTo(t *testing.T) {
+	code := `
+Процедура Тест()
+    Для а = 1 По 10 Цикл
+        б = а;
+    КонецЦикла;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Для")
+	assert.Contains(t, printed, "По")
+}
+
+// TestPrint_DateLiteral tests printing date literals
+func TestPrint_DateLiteral(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = '20240115';
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	// Date parsing and printing
+	assert.NotNil(t, a.ModuleStatement.Body)
+}
+
+// TestPrint_UnaryMinusChain tests parsing unary minus on call chain
+func TestPrint_UnaryMinusChain(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = -Объект.Свойство;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	// Verify parsing succeeded - unaryMinus flag is internal
+	assert.Len(t, a.ModuleStatement.Body, 1)
+}
+
+// TestNewAST_WithBOM tests parsing code with UTF-8 BOM
+func TestNewAST_WithBOM(t *testing.T) {
+	// UTF-8 BOM: 0xEF 0xBB 0xBF
+	bom := string([]byte{0xEF, 0xBB, 0xBF})
+	code := bom + `
+Процедура Тест()
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	assert.Len(t, a.ModuleStatement.Body, 1)
+}
+
+// TestCast tests the Cast helper function
+func TestCast(t *testing.T) {
+	t.Run("successful cast", func(t *testing.T) {
+		var stm Statement = VarStatement{Name: "test"}
+		result := Cast[VarStatement](stm)
+		assert.Equal(t, "test", result.Name)
+	})
+
+	t.Run("failed cast returns zero value", func(t *testing.T) {
+		var stm Statement = BreakStatement{}
+		result := Cast[VarStatement](stm)
+		assert.Equal(t, "", result.Name)
+	})
+}
+
+// TestLex_EmptyCode tests Lex on empty code
+func TestLex_EmptyCode(t *testing.T) {
+	a := NewAST("")
+	lval := &yySymType{}
+	token := a.Lex(lval)
+	assert.Equal(t, EOF, token)
+}
+
+// TestPrint_IntegerLiteral tests printing integer literals
+func TestPrint_IntegerLiteral(t *testing.T) {
+	code := `
+Функция Тест()
+    Возврат 42;
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "42")
+}
+
+// TestPrint_BoolLiteral tests printing boolean literals
+func TestPrint_BoolLiteral(t *testing.T) {
+	code := `
+Функция Тест()
+    Возврат Истина;
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+	printed := a.Print(PrintConf{Margin: 4})
+	assert.Contains(t, printed, "Истина")
+}
+
+// TestPrint_AssignmentInExpression tests printing assignment
+func TestPrint_AssignmentInExpression(t *testing.T) {
+	code := `
+Процедура Тест()
+    а = б = в;
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
 }

@@ -37,8 +37,18 @@ package ast
 %type<token> ','
 %type<global_variables> global_variables
 %type<token> comma
-%type<directive> directive
-%type<directives> opt_many_directives
+%type<directive> one_directive
+%type<directive> opt_directive
+%type<directives> directives
+%type<stmt> lvalue_rest
+%type<stmt> call_rest
+%type<stmt> call_chain
+%type<stmt> call_part
+%type<preproc_if> preproc_if
+%type<preproc_elseifs> opt_preproc_elseifs
+%type<preproc_body> opt_preproc_body preproc_body preproc_item opt_preproc_else
+%type<region_stmt> region_stmt
+%type<use_stmt> use_stmt
 
 %union {
     token Token
@@ -62,10 +72,17 @@ package ast
     opt_goToLabel *GoToLabelStatement
     directive *DirectiveStatement
     directives []*DirectiveStatement
+    preproc_if       *PreprocessorIfStatement
+    preproc_elseifs  []PreprocessorElseIf
+    preproc_body     Statements
+    region_stmt      *RegionStatement
+    use_stmt         *UseStatement
 }
 
 %token<token> Directive ExtDirective token_identifier Procedure Var EndProcedure If Then ElseIf Else EndIf For Each In To Loop EndLoop Break Not ValueParam While GoToLabel
-%token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefind Export Date GoTo Execute
+%token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefined Null Export Date GoTo Execute Async Await
+%token<token> LVALUE_IDENT CALL_IDENT
+%token<token> PreprocIf PreprocElseIf PreprocElse PreprocEndIf PreprocRegion PreprocEndRegion PreprocUse
 
 %nonassoc LOW_PREC /* самый низкий приоритет */
 %left OR
@@ -73,7 +90,7 @@ package ast
 %left NeEQ
 %left LE
 %left GE
-%right Not
+%right Not Await
 %left EQUAL
 %left '>' '<'
 %left '+' '-'
@@ -99,7 +116,7 @@ main_items: main
     | main_items main
 ;
 
-main: global_variables {  
+main: global_variables {
         if ast, ok := yylex.(*AstNode); ok {
             ast.ModuleStatement.Append($1, yylex)
         }
@@ -109,23 +126,42 @@ main: global_variables {
             ast.ModuleStatement.Append($1, yylex)
         }
     }
+    | preproc_if {
+        if ast, ok := yylex.(*AstNode); ok {
+            ast.ModuleStatement.Append($1, yylex)
+        }
+    }
+    | region_stmt {
+        if ast, ok := yylex.(*AstNode); ok {
+            ast.ModuleStatement.Append($1, yylex)
+        }
+    }
+    | use_stmt {
+        if ast, ok := yylex.(*AstNode); ok {
+            ast.ModuleStatement.Append($1, yylex)
+        }
+    }
 ;
 
 
-/* Директивы */
-directive:  { $$ = nil}
-        | Directive { $$ = &DirectiveStatement{ Name: $1.literal }}
+/* Директивы - refactored to eliminate shift/reduce conflicts */
+one_directive: Directive { $$ = &DirectiveStatement{ Name: $1.literal }}
         | ExtDirective '(' String ')' { $$ = &DirectiveStatement{ Name: $1.literal, Src: $3.literal }}
 ;
 
-opt_many_directives: directive {  if $1 != nil { $$ = []*DirectiveStatement{$1} } else { $$ = nil } }
-         | opt_many_directives directive { $$ = append($$, $2) }
+opt_directive: { $$ = nil }
+        | one_directive { $$ = $1 }
+;
+
+directives: one_directive { $$ = []*DirectiveStatement{$1} }
+         | directives one_directive { $$ = append($$, $2) }
+;
 
 opt_export: { $$ = nil}
         | Export { $$ = &$1}
 ;
 
-global_variables: directive Var identifiers opt_export semicolon {
+global_variables: opt_directive Var identifiers opt_export semicolon {
         $$ = make([]GlobalVariables,  len($3), len($3))
         for i, v := range $3 {
             if $1 != nil {
@@ -138,14 +174,42 @@ global_variables: directive Var identifiers opt_export semicolon {
 };
 
 
-funcProc: opt_many_directives Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
-        {  
-            $$ = createFunctionOrProcedure(PFTypeFunction, $1, $3.literal, $5, $7, $9, $10)
-            isFunction(false, yylex) 
+/* 8 вариантов: ±директивы × ±async × функция/процедура */
+funcProc: Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
+        {
+            $$ = createFunctionOrProcedure(PFTypeFunction, nil, nil, $2.literal, $4, $6, $8, $9)
+            isFunction(false, yylex)
         }
-        | opt_many_directives Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
-        { 
-            $$ = createFunctionOrProcedure(PFTypeProcedure, $1, $3.literal, $5, $7, $8, $9)
+        | directives Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
+        {
+            $$ = createFunctionOrProcedure(PFTypeFunction, $1, nil, $3.literal, $5, $7, $9, $10)
+            isFunction(false, yylex)
+        }
+        | Async Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
+        {
+            $$ = createFunctionOrProcedure(PFTypeFunction, nil, &$1, $3.literal, $5, $7, $9, $10)
+            isFunction(false, yylex)
+        }
+        | directives Async Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
+        {
+            $$ = createFunctionOrProcedure(PFTypeFunction, $1, &$2, $4.literal, $6, $8, $10, $11)
+            isFunction(false, yylex)
+        }
+        | Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        {
+            $$ = createFunctionOrProcedure(PFTypeProcedure, nil, nil, $2.literal, $4, $6, $7, $8)
+        }
+        | directives Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        {
+            $$ = createFunctionOrProcedure(PFTypeProcedure, $1, nil, $3.literal, $5, $7, $8, $9)
+        }
+        | Async Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        {
+            $$ = createFunctionOrProcedure(PFTypeProcedure, nil, &$1, $3.literal, $5, $7, $8, $9)
+        }
+        | directives Async Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        {
+            $$ = createFunctionOrProcedure(PFTypeProcedure, $1, &$2, $4.literal, $6, $8, $9, $10)
         }
 ;
 
@@ -262,21 +326,117 @@ loopExp: through_dot { $$ = $1 }
 ;
 
 
-stmt : through_dot EQUAL expr {
-            v := $1
-       	    if tok, ok := $1.(Token); ok {
-       		    v = VarStatement{ Name: tok.literal }
-       	    }
-       	    $$ = AssignmentStatement{ Var: v, Expr: ExprStatements{ Statements: Statements{$3}} }
-       	}
-    | expr %prec LOW_PREC { $$ = $1 }
+/* ═══════════════════════════════════════════════════════════════════
+   lvalue_rest — продолжение цепочки для левой части присваивания
+   Может содержать свойства, индексы, и даже методы посередине:
+   а.б, а[0], а.Метод().в
+   ═══════════════════════════════════════════════════════════════════ */
+lvalue_rest: /* пусто — просто идентификатор */ { $$ = nil }
+           | lvalue_rest '.' token_identifier {
+               prop := VarStatement{ Name: $3.literal }
+               if $1 != nil {
+                   $$ = CallChainStatement{ Unit: prop, Call: $1 }
+               } else {
+                   $$ = prop
+               }
+           }
+           | lvalue_rest '.' token_identifier '(' exprs ')' {
+               method := MethodStatement{ Name: $3.literal, Param: $5 }
+               if $1 != nil {
+                   $$ = CallChainStatement{ Unit: method, Call: $1 }
+               } else {
+                   $$ = method
+               }
+           }
+           | lvalue_rest '[' expr ']' {
+               if $1 != nil {
+                   $$ = ItemStatement{ Object: $1, Item: $3 }
+               } else {
+                   $$ = ItemStatement{ Object: nil, Item: $3 }
+               }
+           }
+;
+
+/* ═══════════════════════════════════════════════════════════════════
+   call_rest — продолжение вызова (после CALL_IDENT)
+   Примеры: (), .Метод(), .свойство, [индекс]
+   ═══════════════════════════════════════════════════════════════════ */
+call_rest: /* пусто — голый идентификатор "а;" */ { $$ = nil }
+         | '(' exprs ')' {
+             // Foo() — вызов метода
+             $$ = MethodStatement{ Name: "", Param: $2 }
+         }
+         | '(' exprs ')' call_chain {
+             // Foo().Bar... — вызов с продолжением
+             method := MethodStatement{ Name: "", Param: $2 }
+             $$ = CallChainStatement{ Unit: $4, Call: method }
+         }
+         | call_chain {
+             // .свойство, .Метод(), [индекс] или их цепочка
+             $$ = $1
+         }
+;
+
+/* ═══════════════════════════════════════════════════════════════════
+   call_chain — цепочка доступа к свойствам/методам/индексам
+   ═══════════════════════════════════════════════════════════════════ */
+call_chain: call_part { $$ = $1 }
+          | call_chain call_part {
+              $$ = CallChainStatement{ Unit: $2, Call: $1 }
+          }
+;
+
+call_part: '.' token_identifier {
+             $$ = VarStatement{ Name: $2.literal }
+         }
+         | '.' token_identifier '(' exprs ')' {
+             $$ = MethodStatement{ Name: $2.literal, Param: $4 }
+         }
+         | '[' expr ']' {
+             $$ = ItemStatement{ Object: nil, Item: $2 }
+         }
+;
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   stmt — оператор (statement)
+   Лексер уже определил тип по lookahead: LVALUE_IDENT или CALL_IDENT
+   ═══════════════════════════════════════════════════════════════════ */
+stmt: LVALUE_IDENT lvalue_rest EQUAL expr {
+        // Присваивание: а = 1, а.б = 1, а.Метод().в = 1
+        lhs := VarStatement{ Name: $1.literal }
+        if $2 != nil {
+            $$ = AssignmentStatement{ Var: CallChainStatement{ Unit: $2, Call: lhs }, Expr: ExprStatements{ Statements: Statements{$4}} }
+        } else {
+            $$ = AssignmentStatement{ Var: lhs, Expr: ExprStatements{ Statements: Statements{$4}} }
+        }
+    }
+    | CALL_IDENT call_rest {
+        // Вызов как statement: Foo(), а.Метод(), а.б
+        if $2 == nil {
+            // Голый идентификатор: а;
+            $$ = VarStatement{ Name: $1.literal }
+        } else if method, ok := $2.(MethodStatement); ok && method.Name == "" {
+            // Простой вызов Foo() — НЕ оборачиваем в CallChainStatement
+            method.Name = $1.literal
+            $$ = method
+        } else {
+            // Цепочка: а.Метод(), а.б, а[0]
+            base := VarStatement{ Name: $1.literal }
+            $$ = CallChainStatement{ Unit: $2, Call: base }
+        }
+    }
     | stmt_if { $$ = $1 }
-    | stmt_loop {$$ = $1 }
+    | stmt_loop { $$ = $1 }
     | stmt_tryCatch { $$ = $1 }
     | Continue { $$ = ContinueStatement{}; checkLoopOperator($1, yylex) }
     | Break { $$ = BreakStatement{}; checkLoopOperator($1, yylex) }
     | Throw opt_expr { $$ = ThrowStatement{ Param: $2 }; checkThrowParam($1, $2, yylex) }
     | Return opt_expr { $$ = &ReturnStatement{ Param: $2 }; checkReturnParam($2, yylex) }
+    | Execute execute_param { $$ = MethodStatement{ Name: $1.literal, Param: ExprStatements{ Statements: Statements{$2}} } }
+    | Execute '(' expr ')' { $$ = MethodStatement{ Name: $1.literal, Param: ExprStatements{ Statements: Statements{$3}} } }
+    | GoTo goToLabel { $$ = GoToStatement{ Label: $2 } }
+    | goToLabel { $$ = $1 }  /* метка ~метка: как statement */
 ;
 
 
@@ -304,6 +464,59 @@ stmt_tryCatch: Try opt_body Catch { setTryFlag(true, yylex) } opt_body EndTry {
     setTryFlag(false, yylex)
 };
 
+preproc_if: PreprocIf opt_preproc_body opt_preproc_elseifs opt_preproc_else PreprocEndIf {
+    $$ = &PreprocessorIfStatement{
+        Condition: $1.literal,
+        ThenBlock: $2,
+        ElseIfs:   $3,
+        ElseBlock: $4,
+    }
+};
+
+opt_preproc_elseifs: { $$ = nil }
+    | opt_preproc_elseifs PreprocElseIf opt_preproc_body {
+        $$ = append($1, PreprocessorElseIf{Condition: $2.literal, Block: $3})
+    }
+;
+
+opt_preproc_else: { $$ = nil }
+    | PreprocElse opt_preproc_body { $$ = $2 }
+;
+
+opt_preproc_body: { $$ = nil }
+    | preproc_body { $$ = $1 }
+;
+
+preproc_body: preproc_item { $$ = $1 }
+    | preproc_body preproc_item { $$ = append($1, $2...) }
+;
+
+preproc_item: funcProc { $$ = Statements{$1} }
+    | global_variables {
+        stmts := make(Statements, len($1))
+        for i, gv := range $1 {
+            stmts[i] = gv
+        }
+        $$ = stmts
+    }
+    | stmt semicolon { $$ = Statements{$1} }
+    | preproc_if { $$ = Statements{$1} }
+    | region_stmt { $$ = Statements{$1} }
+;
+
+region_stmt: PreprocRegion opt_preproc_body PreprocEndRegion {
+    $$ = &RegionStatement{
+        Name: $1.literal,
+        Body: $2,
+    }
+};
+
+use_stmt: PreprocUse {
+    $$ = &UseStatement{
+        Path: $1.literal,
+    }
+};
+
 /* все что может учавствовать в выражениях */
 expr : simple_expr { $$ = $1 }
     | '(' exprs ')' { $$ = $2 }
@@ -321,6 +534,7 @@ expr : simple_expr { $$ = $1 }
     | expr LE expr { $$ = &ExpStatement{Operation: OpLe, Left: $1, Right: $3 } }
     | expr GE expr { $$ = &ExpStatement{Operation: OpGe, Left: $1, Right: $3 } }
     | Not expr { $$ = not($2) }
+    | Await expr { $$ = AwaitStatement{ Expr: $2 } }
     | new_object { $$ = $1 }
     | GoTo goToLabel { $$ = GoToStatement{ Label: $2 } }
     | ternary { $$ =  $1  } /* тернарный оператор */
@@ -346,7 +560,8 @@ simple_expr: String { $$ = $1.value  }
             | True { $$ =  $1.value  }
             | False { $$ =  $1.value  }
             | Date { $$ =  $1.value  }
-            | Undefind { $$ = UndefinedStatement{} }
+            | Undefined { $$ = UndefinedStatement{} }
+            | Null { $$ = NullStatement{} }
             | goToLabel { $$ = $1}
 ;
 

@@ -1,7 +1,7 @@
 package ast
 
 // устанока go install golang.org/x/tools/cmd/goyacc
-//go:generate goyacc  .\grammar.y
+//go:generate goyacc -o y.go grammar.y
 
 import (
 	"encoding/json"
@@ -133,7 +133,7 @@ func setTryFlag(flag bool, yylex yyLexer) {
 	}
 }
 
-func createFunctionOrProcedure(Type StatementType, directive Statement, name string, params []ParamStatement, export Statement, variables map[string]VarStatement, body Statements) *FunctionOrProcedure {
+func createFunctionOrProcedure(Type StatementType, directive []*DirectiveStatement, async *Token, name string, params []ParamStatement, export Statement, variables map[string]VarStatement, body Statements) *FunctionOrProcedure {
 	result := &FunctionOrProcedure{
 		Type:              Type,
 		Name:              name,
@@ -141,10 +141,11 @@ func createFunctionOrProcedure(Type StatementType, directive Statement, name str
 		Export:            export != nil && !reflect.ValueOf(export).IsNil(),
 		Params:            params,
 		ExplicitVariables: variables,
+		Async:             async != nil,
 	}
 
-	if d, ok := directive.([]*DirectiveStatement); ok && d != nil {
-		result.Directives = d
+	if directive != nil {
+		result.Directives = directive
 	}
 
 	return result
