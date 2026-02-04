@@ -395,7 +395,21 @@ func (p *astPrint) printCallChainStatement(call Statement) string {
 	switch v := call.(type) {
 	case CallChainStatement:
 		if v.Call != nil {
-			return p.printCallChainStatement(v.Call) + "." + p.printVarStatement(v.Unit)
+			prefix := p.printCallChainStatement(v.Call)
+			// ItemStatement (индексный доступ [0]) не требует точки перед собой
+			// Проверяем: Unit это ItemStatement напрямую, или Unit это CallChain начинающийся с ItemStatement
+			needsDot := true
+			if _, isItem := v.Unit.(ItemStatement); isItem {
+				needsDot = false
+			} else if chain, isChain := v.Unit.(CallChainStatement); isChain {
+				if _, isItem := chain.Call.(ItemStatement); isItem {
+					needsDot = false
+				}
+			}
+			if needsDot {
+				return prefix + "." + p.printVarStatement(v.Unit)
+			}
+			return prefix + p.printVarStatement(v.Unit)
 		}
 	case VarStatement, ItemStatement, MethodStatement:
 		return p.printVarStatement(call)

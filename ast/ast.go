@@ -1,7 +1,7 @@
 package ast
 
 // устанока go install golang.org/x/tools/cmd/goyacc
-//go:generate goyacc  .\grammar.y
+//go:generate goyacc -o y.go grammar.y
 
 import (
 	"encoding/json"

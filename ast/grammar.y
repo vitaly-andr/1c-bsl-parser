@@ -41,6 +41,10 @@ package ast
 %type<directive> opt_directive
 %type<directives> directives
 %type<directives> opt_directives
+%type<stmt> lvalue_rest
+%type<stmt> call_rest
+%type<stmt> call_chain
+%type<stmt> call_part
 
 %union {
     token Token
@@ -68,6 +72,7 @@ package ast
 
 %token<token> Directive ExtDirective token_identifier Procedure Var EndProcedure If Then ElseIf Else EndIf For Each In To Loop EndLoop Break Not ValueParam While GoToLabel
 %token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefined Export Date GoTo Execute
+%token<token> LVALUE_IDENT CALL_IDENT
 
 %nonassoc LOW_PREC /* самый низкий приоритет */
 %left OR
@@ -272,21 +277,117 @@ loopExp: through_dot { $$ = $1 }
 ;
 
 
-stmt : through_dot EQUAL expr {
-            v := $1
-       	    if tok, ok := $1.(Token); ok {
-       		    v = VarStatement{ Name: tok.literal }
-       	    }
-       	    $$ = AssignmentStatement{ Var: v, Expr: ExprStatements{ Statements: Statements{$3}} }
-       	}
-    | expr %prec LOW_PREC { $$ = $1 }
+/* ═══════════════════════════════════════════════════════════════════
+   lvalue_rest — продолжение цепочки для левой части присваивания
+   Может содержать свойства, индексы, и даже методы посередине:
+   а.б, а[0], а.Метод().в
+   ═══════════════════════════════════════════════════════════════════ */
+lvalue_rest: /* пусто — просто идентификатор */ { $$ = nil }
+           | lvalue_rest '.' token_identifier {
+               prop := VarStatement{ Name: $3.literal }
+               if $1 != nil {
+                   $$ = CallChainStatement{ Unit: prop, Call: $1 }
+               } else {
+                   $$ = prop
+               }
+           }
+           | lvalue_rest '.' token_identifier '(' exprs ')' {
+               method := MethodStatement{ Name: $3.literal, Param: $5 }
+               if $1 != nil {
+                   $$ = CallChainStatement{ Unit: method, Call: $1 }
+               } else {
+                   $$ = method
+               }
+           }
+           | lvalue_rest '[' expr ']' {
+               if $1 != nil {
+                   $$ = ItemStatement{ Object: $1, Item: $3 }
+               } else {
+                   $$ = ItemStatement{ Object: nil, Item: $3 }
+               }
+           }
+;
+
+/* ═══════════════════════════════════════════════════════════════════
+   call_rest — продолжение вызова (после CALL_IDENT)
+   Примеры: (), .Метод(), .свойство, [индекс]
+   ═══════════════════════════════════════════════════════════════════ */
+call_rest: /* пусто — голый идентификатор "а;" */ { $$ = nil }
+         | '(' exprs ')' {
+             // Foo() — вызов метода
+             $$ = MethodStatement{ Name: "", Param: $2 }
+         }
+         | '(' exprs ')' call_chain {
+             // Foo().Bar... — вызов с продолжением
+             method := MethodStatement{ Name: "", Param: $2 }
+             $$ = CallChainStatement{ Unit: $4, Call: method }
+         }
+         | call_chain {
+             // .свойство, .Метод(), [индекс] или их цепочка
+             $$ = $1
+         }
+;
+
+/* ═══════════════════════════════════════════════════════════════════
+   call_chain — цепочка доступа к свойствам/методам/индексам
+   ═══════════════════════════════════════════════════════════════════ */
+call_chain: call_part { $$ = $1 }
+          | call_chain call_part {
+              $$ = CallChainStatement{ Unit: $2, Call: $1 }
+          }
+;
+
+call_part: '.' token_identifier {
+             $$ = VarStatement{ Name: $2.literal }
+         }
+         | '.' token_identifier '(' exprs ')' {
+             $$ = MethodStatement{ Name: $2.literal, Param: $4 }
+         }
+         | '[' expr ']' {
+             $$ = ItemStatement{ Object: nil, Item: $2 }
+         }
+;
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   stmt — оператор (statement)
+   Лексер уже определил тип по lookahead: LVALUE_IDENT или CALL_IDENT
+   ═══════════════════════════════════════════════════════════════════ */
+stmt: LVALUE_IDENT lvalue_rest EQUAL expr {
+        // Присваивание: а = 1, а.б = 1, а.Метод().в = 1
+        lhs := VarStatement{ Name: $1.literal }
+        if $2 != nil {
+            $$ = AssignmentStatement{ Var: CallChainStatement{ Unit: $2, Call: lhs }, Expr: ExprStatements{ Statements: Statements{$4}} }
+        } else {
+            $$ = AssignmentStatement{ Var: lhs, Expr: ExprStatements{ Statements: Statements{$4}} }
+        }
+    }
+    | CALL_IDENT call_rest {
+        // Вызов как statement: Foo(), а.Метод(), а.б
+        if $2 == nil {
+            // Голый идентификатор: а;
+            $$ = VarStatement{ Name: $1.literal }
+        } else if method, ok := $2.(MethodStatement); ok && method.Name == "" {
+            // Простой вызов Foo() — НЕ оборачиваем в CallChainStatement
+            method.Name = $1.literal
+            $$ = method
+        } else {
+            // Цепочка: а.Метод(), а.б, а[0]
+            base := VarStatement{ Name: $1.literal }
+            $$ = CallChainStatement{ Unit: $2, Call: base }
+        }
+    }
     | stmt_if { $$ = $1 }
-    | stmt_loop {$$ = $1 }
+    | stmt_loop { $$ = $1 }
     | stmt_tryCatch { $$ = $1 }
     | Continue { $$ = ContinueStatement{}; checkLoopOperator($1, yylex) }
     | Break { $$ = BreakStatement{}; checkLoopOperator($1, yylex) }
     | Throw opt_expr { $$ = ThrowStatement{ Param: $2 }; checkThrowParam($1, $2, yylex) }
     | Return opt_expr { $$ = &ReturnStatement{ Param: $2 }; checkReturnParam($2, yylex) }
+    | Execute execute_param { $$ = MethodStatement{ Name: $1.literal, Param: ExprStatements{ Statements: Statements{$2}} } }
+    | Execute '(' expr ')' { $$ = MethodStatement{ Name: $1.literal, Param: ExprStatements{ Statements: Statements{$3}} } }
+    | GoTo goToLabel { $$ = GoToStatement{ Label: $2 } }
+    | goToLabel { $$ = $1 }  /* метка ~метка: как statement */
 ;
 
 

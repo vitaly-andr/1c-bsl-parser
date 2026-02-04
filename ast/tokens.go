@@ -22,12 +22,13 @@ type Position struct {
 }
 
 type Token struct {
-	ast      Iast
-	value    interface{}
-	literal  string
-	position Position
-	offset   int
-	prevDot  bool
+	ast           Iast
+	value         interface{}
+	literal       string
+	position      Position
+	offset        int
+	prevDot       bool
+	prevTokenType int // для определения начала statement (lookahead)
 }
 
 const (
@@ -100,6 +101,9 @@ func (t *Token) Next(ast Iast) (token int, err error) {
 	t.ast = ast
 	token, t.literal, err = t.next()
 
+	// Сохраняем тип токена для определения начала statement
+	defer func() { t.prevTokenType = token }()
+
 	switch token {
 	case Number:
 		t.value, err = strconv.ParseFloat(t.literal, 64)
@@ -145,9 +149,19 @@ func (t *Token) next() (int, string, error) {
 
 		if tName, ok := tokens[lowLit]; ok && !t.prevDot {
 			return tName, literal, nil
-		} else {
-			return token_identifier, literal, nil
 		}
+
+		// Для идентификаторов: определяем тип по контексту
+		// Если в начале statement — используем lookahead для различения lvalue/call
+		if t.atStatementStart() && !t.prevDot {
+			if t.hasEqualBeforeSemicolon() {
+				return LVALUE_IDENT, literal, nil
+			}
+			return CALL_IDENT, literal, nil
+		}
+
+		// Обычный идентификатор (в выражениях, после точки, и т.д.)
+		return token_identifier, literal, nil
 	case let == '.':
 		// если после точки у нас следует идентификатор то нам нужно читать его обычным идентификатором
 		// Могут быть таие случаи стр.Истина = 1 или стр.Функция = 2 (стр в данном случае какой-то объект, например структура)
@@ -351,6 +365,89 @@ func (t *Token) skipRegions() {
 	} else if cl := t.currentLet(); cl == '#' {
 		t.skipRegions()
 	}
+}
+
+// atStatementStart определяет, находимся ли мы в начале statement.
+// Используется для различения lvalue (присваивание) от call_stmt (вызов метода).
+func (t *Token) atStatementStart() bool {
+	switch t.prevTokenType {
+	// Токены, которые ПРОДОЛЖАЮТ выражение
+	case '.':
+		return false // после точки идёт свойство/метод
+	case '(':
+		return false // внутри скобок (аргументы, группировка)
+	case '[':
+		return false // внутри индекса
+	case ',':
+		return false // аргументы функции
+	case '+', '-', '*', '/', '%':
+		return false // арифметика
+	case '<', '>':
+		return false // сравнение
+	case EQUAL:
+		return false // присваивание или сравнение в выражении
+	case NeEQ, LE, GE:
+		return false // сравнение
+	case And, OR:
+		return false // логические операторы
+	case Not:
+		return false // унарный оператор
+	case ValueParam:
+		return false // после Знач идёт имя параметра
+
+	// Токены, после которых идёт НЕ statement, а часть конструкции
+	case Procedure, Function:
+		return false // после них идёт имя функции
+	case Var:
+		return false // после Var идёт имя переменной
+	case For:
+		return false // после For идёт переменная цикла или Each
+	case Each:
+		return false // после Each идёт переменная
+	case In, To:
+		return false // после In/To идёт выражение
+	case New:
+		return false // после New идёт тип
+	case GoTo:
+		return false // после GoTo идёт метка
+	case Return, Throw, Execute:
+		return false // после них идёт выражение или параметр
+	case If, ElseIf, While:
+		return false // после них идёт условие
+	}
+	// Для всех остальных (;, ), ], Then, Loop, Else, Catch, Try, identifiers, literals, etc.)
+	// предполагаем что это начало statement
+	return true
+}
+
+// hasEqualBeforeSemicolon сканирует вперёд и ищет одиночный "=" до ";".
+// Используется для различения lvalue (присваивание) от call_stmt (вызов метода).
+// Учитывает вложенность скобок — "=" внутри скобок игнорируется.
+func (t *Token) hasEqualBeforeSemicolon() bool {
+	srsCode := t.ast.SrsCode()
+	depth := 0
+	pos := t.offset
+
+	for pos < len(srsCode) {
+		ch, size := utf8.DecodeRuneInString(srsCode[pos:])
+		switch ch {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case '=':
+			// "=" на верхнем уровне вложенности = присваивание
+			// В 1С нет "==", поэтому любой "=" вне скобок — это присваивание
+			if depth == 0 {
+				return true
+			}
+		case ';', EOF:
+			return false // конец statement без "="
+		// '\n' НЕ останавливает поиск — в 1С statement может занимать несколько строк
+		}
+		pos += size
+	}
+	return false
 }
 
 func (t *Token) nextLet() rune {

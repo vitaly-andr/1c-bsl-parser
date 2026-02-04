@@ -69,7 +69,7 @@ func Test_Next(t *testing.T) {
 			token, err := tok.Next(ast)
 			assert.NoError(t, err)
 			assert.Equal(t, "тестПерем", tok.literal)
-			assert.Equal(t, token, token_identifier)
+			assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 			token, err = tok.Next(ast)
 			assert.NoError(t, err)
@@ -89,7 +89,7 @@ func Test_Next(t *testing.T) {
 			token, err := tok.Next(ast)
 			assert.NoError(t, err)
 			assert.Equal(t, "тестПерем", tok.literal)
-			assert.Equal(t, token, token_identifier)
+			assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 			token, err = tok.Next(ast)
 			assert.NoError(t, err)
@@ -110,7 +110,7 @@ func Test_Next(t *testing.T) {
 				token, err := tok.Next(ast)
 				assert.NoError(t, err)
 				assert.Equal(t, "тестПерем", tok.literal)
-				assert.Equal(t, token, token_identifier)
+				assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 				token, err = tok.Next(ast)
 				assert.NoError(t, err)
@@ -130,7 +130,7 @@ func Test_Next(t *testing.T) {
 				token, err := tok.Next(ast)
 				assert.NoError(t, err)
 				assert.Equal(t, "тестПерем", tok.literal)
-				assert.Equal(t, token, token_identifier)
+				assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 				token, err = tok.Next(ast)
 				assert.NoError(t, err)
@@ -151,7 +151,7 @@ func Test_Next(t *testing.T) {
 		token, err := tok.Next(ast)
 		assert.NoError(t, err)
 		assert.Equal(t, "тестПерем", tok.literal)
-		assert.Equal(t, token, token_identifier)
+		assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 		token, err = tok.Next(ast)
 		assert.NoError(t, err)
@@ -170,7 +170,7 @@ func Test_Next(t *testing.T) {
 		token, err := tok.Next(ast)
 		assert.NoError(t, err)
 		assert.Equal(t, "тестПерем", tok.literal)
-		assert.Equal(t, token, token_identifier)
+		assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 		token, err = tok.Next(ast)
 		assert.NoError(t, err)
@@ -191,7 +191,7 @@ func Test_Next(t *testing.T) {
 		token, err := tok.Next(ast)
 		assert.NoError(t, err)
 		assert.Equal(t, "тестПерем", tok.literal)
-		assert.Equal(t, token, token_identifier)
+		assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 		token, err = tok.Next(ast)
 		assert.NoError(t, err)
@@ -215,7 +215,7 @@ func Test_Next(t *testing.T) {
 		token, err := tok.Next(ast)
 		assert.NoError(t, err)
 		assert.Equal(t, "тестПерем", tok.literal)
-		assert.Equal(t, token, token_identifier)
+		assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 		token, err = tok.Next(ast)
 		assert.NoError(t, err)
@@ -369,7 +369,7 @@ func Test_Next(t *testing.T) {
 			token, err := tok.Next(ast)
 			assert.NoError(t, err)
 			assert.Equal(t, "test", tok.literal)
-			assert.Equal(t, token, token_identifier)
+			assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 			token, err = tok.Next(ast)
 			assert.NoError(t, err)
@@ -389,7 +389,7 @@ func Test_Next(t *testing.T) {
 			token, err := tok.Next(ast)
 			assert.NoError(t, err)
 			assert.Equal(t, "test", tok.literal)
-			assert.Equal(t, token, token_identifier)
+			assert.Equal(t, token, LVALUE_IDENT) // assignment context
 
 			token, err = tok.Next(ast)
 			assert.NoError(t, err)
