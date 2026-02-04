@@ -68,7 +68,7 @@ var (
 		"или":               OR,
 		"истина":            True,
 		"ложь":              False,
-		"неопределено":      Undefind,
+		"неопределено":      Undefined,
 		"не":                Not,
 		"экспорт":           Export,
 		"выполнить":         Execute,
@@ -118,7 +118,7 @@ func (t *Token) Next(ast Iast) (token int, err error) {
 				break
 			}
 		}
-	case Undefind:
+	case Undefined:
 		t.value = nil
 	case True:
 		t.value = true

@@ -250,7 +250,7 @@ func Test_Next(t *testing.T) {
 		token, err = tok.Next(ast)
 		assert.NoError(t, err)
 		assert.Equal(t, "Неопределено", tok.literal)
-		assert.Equal(t, token, Undefind)
+		assert.Equal(t, token, Undefined)
 
 		token, err = tok.Next(ast)
 		assert.NoError(t, err)

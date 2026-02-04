@@ -65,7 +65,7 @@ package ast
 }
 
 %token<token> Directive ExtDirective token_identifier Procedure Var EndProcedure If Then ElseIf Else EndIf For Each In To Loop EndLoop Break Not ValueParam While GoToLabel
-%token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefind Export Date GoTo Execute
+%token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefined Export Date GoTo Execute
 
 %nonassoc LOW_PREC /* самый низкий приоритет */
 %left OR
@@ -346,7 +346,7 @@ simple_expr: String { $$ = $1.value  }
             | True { $$ =  $1.value  }
             | False { $$ =  $1.value  }
             | Date { $$ =  $1.value  }
-            | Undefind { $$ = UndefinedStatement{} }
+            | Undefined { $$ = UndefinedStatement{} }
             | goToLabel { $$ = $1}
 ;
 
