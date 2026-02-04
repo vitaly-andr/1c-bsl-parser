@@ -37,8 +37,10 @@ package ast
 %type<token> ','
 %type<global_variables> global_variables
 %type<token> comma
-%type<directive> directive
-%type<directives> opt_many_directives
+%type<directive> one_directive
+%type<directive> opt_directive
+%type<directives> directives
+%type<directives> opt_directives
 
 %union {
     token Token
@@ -112,20 +114,28 @@ main: global_variables {
 ;
 
 
-/* Директивы */
-directive:  { $$ = nil}
-        | Directive { $$ = &DirectiveStatement{ Name: $1.literal }}
+/* Директивы - refactored to eliminate shift/reduce conflicts */
+one_directive: Directive { $$ = &DirectiveStatement{ Name: $1.literal }}
         | ExtDirective '(' String ')' { $$ = &DirectiveStatement{ Name: $1.literal, Src: $3.literal }}
 ;
 
-opt_many_directives: directive {  if $1 != nil { $$ = []*DirectiveStatement{$1} } else { $$ = nil } }
-         | opt_many_directives directive { $$ = append($$, $2) }
+opt_directive: { $$ = nil }
+        | one_directive { $$ = $1 }
+;
+
+directives: one_directive { $$ = []*DirectiveStatement{$1} }
+         | directives one_directive { $$ = append($$, $2) }
+;
+
+opt_directives: { $$ = nil }
+        | directives { $$ = $1 }
+;
 
 opt_export: { $$ = nil}
         | Export { $$ = &$1}
 ;
 
-global_variables: directive Var identifiers opt_export semicolon {
+global_variables: opt_directive Var identifiers opt_export semicolon {
         $$ = make([]GlobalVariables,  len($3), len($3))
         for i, v := range $3 {
             if $1 != nil {
@@ -138,13 +148,13 @@ global_variables: directive Var identifiers opt_export semicolon {
 };
 
 
-funcProc: opt_many_directives Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
-        {  
+funcProc: opt_directives Function token_identifier '(' declarations_method_params ')' opt_export { isFunction(true, yylex) } opt_explicit_variables opt_body EndFunction
+        {
             $$ = createFunctionOrProcedure(PFTypeFunction, $1, $3.literal, $5, $7, $9, $10)
-            isFunction(false, yylex) 
+            isFunction(false, yylex)
         }
-        | opt_many_directives Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
-        { 
+        | opt_directives Procedure token_identifier '(' declarations_method_params ')' opt_export opt_explicit_variables opt_body EndProcedure
+        {
             $$ = createFunctionOrProcedure(PFTypeProcedure, $1, $3.literal, $5, $7, $8, $9)
         }
 ;
