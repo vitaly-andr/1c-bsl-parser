@@ -22,3 +22,10 @@
 go.work
 
 ast/y.output
+
+# Claude Code / Speckit
+CLAUDE.md
+.claude/
+.specify/
+specs/y.output
+/y.output
