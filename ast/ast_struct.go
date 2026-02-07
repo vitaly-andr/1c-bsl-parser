@@ -302,9 +302,12 @@ func StatementWalk(parentStm Statement, stm Statements, callBack fCallBack) {
 func (m *ModuleStatement) Append(item Statement, yylex yyLexer) {
 	switch v := item.(type) {
 	case GlobalVariables:
-		if len(m.Body) > 0 {
-			yylex.Error("variable declarations must be placed at the beginning of the module")
-			return
+		// Variables must come before procedures/functions, but regions are OK
+		for _, item := range m.Body {
+			if _, isFuncProc := item.(*FunctionOrProcedure); isFuncProc {
+				yylex.Error("variable declarations must be placed at the beginning of the module")
+				return
+			}
 		}
 
 		if m.GlobalVariables == nil {

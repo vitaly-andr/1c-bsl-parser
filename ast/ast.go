@@ -6,11 +6,35 @@ package ast
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pkg/errors"
+	"os"
 	"reflect"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
+
+	"github.com/pkg/errors"
+	"golang.org/x/text/encoding/charmap"
 )
+
+// Debug tracing — set to non-nil to enable token logging
+var traceFile *os.File
+
+func EnableTrace(path string) {
+	f, err := os.Create(path)
+	if err != nil {
+		panic(err)
+	}
+	traceFile = f
+	yyDebug = 4 // yacc built-in: 1=state, 2=+discard, 3=+lex, 4=+char
+}
+
+func DisableTrace() {
+	if traceFile != nil {
+		traceFile.Close()
+		traceFile = nil
+	}
+	yyDebug = 0
+}
 
 type AstNode struct {
 	err  error
@@ -32,6 +56,11 @@ func NewAST(code string) *AstNode {
 	// Strip UTF-8 BOM if present
 	if len(code) >= 3 && code[0] == 0xEF && code[1] == 0xBB && code[2] == 0xBF {
 		code = code[3:]
+	} else if !utf8.ValidString(code) {
+		// Try to decode as Windows-1251 (common for 1C files)
+		if decoded, err := charmap.Windows1251.NewDecoder().String(code); err == nil {
+			code = decoded
+		}
 	}
 	return &AstNode{
 		code: code,
@@ -48,6 +77,7 @@ func (ast *AstNode) Parse() error {
 		errors.Wrap(ast.err, "parse error")
 	}
 	return ast.err
+
 }
 
 func (ast *AstNode) JSON() ([]byte, error) {
@@ -69,6 +99,20 @@ func (ast *AstNode) Lex(lval *yySymType) int {
 	}
 
 	ast.currentToken = lval.token
+	if traceFile != nil {
+		pos := lval.token.GetPosition()
+		name := fmt.Sprintf("tok-%d", token)
+		// Map token int to yyToknames index via yyTok2
+		if token >= yyPrivate && token < yyPrivate+len(yyTok2) {
+			idx := int(yyTok2[token-yyPrivate])
+			if idx >= 1 && idx-1 < len(yyToknames) && yyToknames[idx-1] != "" {
+				name = yyToknames[idx-1]
+			}
+		} else if token > 0 && token < 128 {
+			name = fmt.Sprintf("'%c'", token)
+		}
+		fmt.Fprintf(traceFile, "%-4d:%-3d  %-20s %q\n", pos.Line, pos.Column, name, lval.token.literal)
+	}
 	return token
 }
 
@@ -81,6 +125,9 @@ func (ast *AstNode) Error(s string) {
 	pos.Column -= len([]rune(ast.currentToken.literal)) + 1
 
 	ast.err = fmt.Errorf("%s. line: %d, column: %d (unexpected literal: %q)", s, pos.Line, pos.Column, ast.currentToken.literal)
+	if traceFile != nil {
+		fmt.Fprintf(traceFile, ">>> ERROR: %s at %d:%d literal=%q\n", s, pos.Line, pos.Column, ast.currentToken.literal)
+	}
 }
 
 func checkLoopOperator(token Token, yylex yyLexer) {

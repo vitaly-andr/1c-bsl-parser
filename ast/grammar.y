@@ -10,7 +10,6 @@ package ast
 %type<stmt_if> stmt_if
 %type<opt_elseif_list> opt_elseif_list
 %type<opt_else> opt_else
-%type<stmt> opt_stmt
 %type<exprs> exprs 
 %type<stmt> expr
 %type<opt_export> opt_export
@@ -29,9 +28,8 @@ package ast
 %type<stmt> stmt_tryCatch
 %type<stmt> identifier
 %type<goToLabel> goToLabel
-%type<token> separator
+%type<stmt> body_elem
 %type<token> semicolon
-%type<token> colon
 %type<token> ':'
 %type<token> ';'
 %type<token> ','
@@ -47,8 +45,11 @@ package ast
 %type<preproc_if> preproc_if
 %type<preproc_elseifs> opt_preproc_elseifs
 %type<preproc_body> opt_preproc_body preproc_body preproc_item opt_preproc_else
-%type<region_stmt> region_stmt
+%type<region_stmt> region_stmt region_stmt_body
 %type<use_stmt> use_stmt
+%type<preproc_if> preproc_if_body
+%type<preproc_elseifs> opt_preproc_elseifs_body
+%type<preproc_body> opt_preproc_else_body
 
 %union {
     token Token
@@ -83,8 +84,11 @@ package ast
 %token<token> Continue Try Catch EndTry Number String New Function EndFunction Return Throw NeEQ EQUAL LE GE OR And True False Undefined Null Export Date GoTo Execute Async Await
 %token<token> LVALUE_IDENT CALL_IDENT
 %token<token> PreprocIf PreprocElseIf PreprocElse PreprocEndIf PreprocRegion PreprocEndRegion PreprocUse
+%token<token> PreprocIfBody PreprocElseIfBody PreprocElseBody PreprocEndIfBody PreprocRegionBody PreprocEndRegionBody
+%token<token> VarBody
 
 %nonassoc LOW_PREC /* самый низкий приоритет */
+%nonassoc GoToLabel GoTo Execute '(' VarBody /* higher than LOW_PREC to resolve opt_expr, call_part, and VarBody */
 %left OR
 %left And
 %left NeEQ
@@ -114,6 +118,7 @@ module: /* empty */ {  }
 
 main_items: main
     | main_items main
+    | main_items ';' main  /* КонецПроцедуры; Процедура ... — semicolon between procedures */
 ;
 
 main: global_variables {
@@ -216,44 +221,38 @@ funcProc: Function token_identifier '(' declarations_method_params ')' opt_expor
 opt_body: { $$ = nil }
 	| body { $$ = $1 }
 ;
-    
-
-body: stmt { $$ = Statements{$1}}
-    | opt_body separator opt_stmt { 
-        if $2.literal == ":" && len($1) > 0 {
-            if _, ok := $1[len($1)-1].(*GoToLabelStatement); !ok {
-                yylex.Error("semicolon (;) is expected")
-            }
-        }
-        if $3 != nil {
-            $$ = append($$, $3) 
-        }
-    }
-    
+/* body mirrors Java BSLParser's codeBlock: (statement | preprocessor)*
+   Semicolons are absorbed by body rule (not separators between statements).
+   This allows free interleaving of statements and preprocessor blocks. */
+body: body_elem { $$ = Statements{$1} }
+    | body body_elem { $$ = append($1, $2) }
+    | body ';' { $$ = $1 }  /* absorb semicolons between/after elements */
+    | ';' { $$ = Statements{} }  /* bare semicolons (e.g., Тогда; or leading ;) */
 ;
 
-opt_stmt: { $$ = nil }
-        | stmt { $$ = $1 }
+body_elem: stmt { $$ = $1 }
+    | VarBody identifiers ';' { $$ = VarStatement{Name: $2[0].literal} }  /* Перем inside body (e.g. inside #Region) */
+    | preproc_if_body { $$ = $1 }
+    | region_stmt_body { $$ = $1 }
+    | goToLabel ':' { $$ = $1 }  /* ~метка: */
 ;
-
-separator: semicolon { $$ = $1} | colon { $$ = $1};
 
 
 /* переменные */ 
-opt_explicit_variables: { $$ = map[string]VarStatement{} }
-            | explicit_variables { $$ = $1 }
+opt_explicit_variables: %prec LOW_PREC { $$ = map[string]VarStatement{} }
+            | explicit_variables %prec LOW_PREC { $$ = $1 }
 ;
 
-explicit_variables: Var identifiers semicolon { 
+explicit_variables: VarBody identifiers semicolon {
                     if vars, err := appendVarStatements(map[string]VarStatement{}, $2); err != nil {
-                        yylex.Error(err.Error()) 
+                        yylex.Error(err.Error())
                     } else {
                         $$ = vars
                     }
                 }
-            | explicit_variables Var identifiers semicolon {
+            | explicit_variables VarBody identifiers semicolon {
                     if vars, err := appendVarStatements($1, $3); err != nil {
-                        yylex.Error(err.Error()) 
+                        yylex.Error(err.Error())
                     } else {
                         $$ = vars
                     }
@@ -332,7 +331,16 @@ loopExp: through_dot { $$ = $1 }
    а.б, а[0], а.Метод().в
    ═══════════════════════════════════════════════════════════════════ */
 lvalue_rest: /* пусто — просто идентификатор */ { $$ = nil }
-           | lvalue_rest '.' token_identifier {
+           | lvalue_rest '(' exprs ')' {
+               /* Ident(...).Prop = value — method call as part of lvalue chain */
+               method := MethodStatement{ Name: "", Param: $3 }
+               if $1 != nil {
+                   $$ = CallChainStatement{ Unit: method, Call: $1 }
+               } else {
+                   $$ = method
+               }
+           }
+           | lvalue_rest '.' token_identifier %prec LOW_PREC {
                prop := VarStatement{ Name: $3.literal }
                if $1 != nil {
                    $$ = CallChainStatement{ Unit: prop, Call: $1 }
@@ -386,7 +394,7 @@ call_chain: call_part { $$ = $1 }
           }
 ;
 
-call_part: '.' token_identifier {
+call_part: '.' token_identifier %prec LOW_PREC {
              $$ = VarStatement{ Name: $2.literal }
          }
          | '.' token_identifier '(' exprs ')' {
@@ -433,10 +441,9 @@ stmt: LVALUE_IDENT lvalue_rest EQUAL expr {
     | Break { $$ = BreakStatement{}; checkLoopOperator($1, yylex) }
     | Throw opt_expr { $$ = ThrowStatement{ Param: $2 }; checkThrowParam($1, $2, yylex) }
     | Return opt_expr { $$ = &ReturnStatement{ Param: $2 }; checkReturnParam($2, yylex) }
-    | Execute execute_param { $$ = MethodStatement{ Name: $1.literal, Param: ExprStatements{ Statements: Statements{$2}} } }
-    | Execute '(' expr ')' { $$ = MethodStatement{ Name: $1.literal, Param: ExprStatements{ Statements: Statements{$3}} } }
+    | Execute expr { $$ = MethodStatement{ Name: $1.literal, Param: ExprStatements{ Statements: Statements{$2}} } }
     | GoTo goToLabel { $$ = GoToStatement{ Label: $2 } }
-    | goToLabel { $$ = $1 }  /* метка ~метка: как statement */
+    | Await expr { $$ = AwaitStatement{ Expr: $2 } }  /* Ждать Метод(); as standalone statement */
 ;
 
 
@@ -487,10 +494,6 @@ opt_preproc_body: { $$ = nil }
     | preproc_body { $$ = $1 }
 ;
 
-preproc_body: preproc_item { $$ = $1 }
-    | preproc_body preproc_item { $$ = append($1, $2...) }
-;
-
 preproc_item: funcProc { $$ = Statements{$1} }
     | global_variables {
         stmts := make(Statements, len($1))
@@ -499,9 +502,15 @@ preproc_item: funcProc { $$ = Statements{$1} }
         }
         $$ = stmts
     }
-    | stmt semicolon { $$ = Statements{$1} }
+    | stmt { $$ = Statements{$1} }
+    | goToLabel ':' { $$ = Statements{$1} }
     | preproc_if { $$ = Statements{$1} }
     | region_stmt { $$ = Statements{$1} }
+;
+
+preproc_body: preproc_item { $$ = $1 }
+    | preproc_body preproc_item { $$ = append($1, $2...) }
+    | preproc_body ';' { $$ = $1 }  /* absorb stray semicolons (e.g. КонецПроцедуры;) */
 ;
 
 region_stmt: PreprocRegion opt_preproc_body PreprocEndRegion {
@@ -517,7 +526,39 @@ use_stmt: PreprocUse {
     }
 };
 
-/* все что может учавствовать в выражениях */
+/* ═══════════════════════════════════════════════════════════════════
+   Body-level preprocessor rules (inside procedure/function bodies)
+   Use *Body tokens emitted by lexer when inProcedure == true
+   ═══════════════════════════════════════════════════════════════════ */
+preproc_if_body: PreprocIfBody opt_body opt_preproc_elseifs_body opt_preproc_else_body PreprocEndIfBody {
+    $$ = &PreprocessorIfStatement{
+        Condition: $1.literal,
+        ThenBlock: $2,
+        ElseIfs:   $3,
+        ElseBlock: $4,
+    }
+};
+
+opt_preproc_elseifs_body: { $$ = nil }
+    | opt_preproc_elseifs_body PreprocElseIfBody opt_body {
+        $$ = append($1, PreprocessorElseIf{Condition: $2.literal, Block: $3})
+    }
+;
+
+opt_preproc_else_body: { $$ = nil }
+    | PreprocElseBody opt_body { $$ = $2 }
+;
+
+
+/* Body-level regions are standalone directives because 1C allows them
+   to split code blocks (e.g., a #Region inside a For loop with #EndRegion
+   before EndDo). Module-level region_stmt remains a container.
+   Nesting can be reconstructed in a post-processing pass if needed. */
+region_stmt_body: PreprocRegionBody { $$ = &RegionStatement{Name: $1.literal} }
+    | PreprocEndRegionBody { $$ = &RegionStatement{} }
+;
+
+/* все что может участвовать в выражениях */
 expr : simple_expr { $$ = $1 }
     | '(' exprs ')' { $$ = $2 }
     | expr '+' expr { $$ = &ExpStatement{Operation: OpPlus, Left: $1, Right: $3} }
@@ -538,6 +579,7 @@ expr : simple_expr { $$ = $1 }
     | new_object { $$ = $1 }
     | GoTo goToLabel { $$ = GoToStatement{ Label: $2 } }
     | ternary { $$ =  $1  } /* тернарный оператор */
+    | ternary call_chain { $$ = CallChainStatement{ Unit: $2, Call: $1 } } /* ?(a,b,c).Method() */
     | through_dot {
 	    if tok, ok := $1.(Token); ok {
 		    $$ = tok.literal
@@ -547,7 +589,7 @@ expr : simple_expr { $$ = $1 }
 	}
 ;
 
-opt_expr: { $$ = nil } | expr { $$ = $1 };
+opt_expr: %prec LOW_PREC { $$ = nil } | expr { $$ = $1 };
 
 exprs : opt_expr {$$ = ExprStatements{ Statements: Statements{$1}} }
 	| exprs comma opt_expr { $$.Statements = append($$.Statements, $3) }
@@ -595,7 +637,6 @@ identifiers: token_identifier %prec LOW_PREC  { $$ = []Token{$1} }
 ;
 
 semicolon: ';' {$$ = $1};
-colon: ':'{$$ = $1};
 comma: ',' {$$ = $1};
 dot: '.';
 

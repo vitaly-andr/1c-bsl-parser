@@ -28,7 +28,9 @@ type Token struct {
 	position      Position
 	offset        int
 	prevDot       bool
-	prevTokenType int // для определения начала statement (lookahead)
+	prevTokenType int  // для определения начала statement (lookahead)
+	inProcedure   bool // true после Procedure/Function, false после EndProcedure/EndFunction
+	regionDepth   int  // tracks #Region nesting to skip orphan #EndRegion
 }
 
 const (
@@ -77,6 +79,10 @@ var (
 		"не":                Not,
 		"экспорт":           Export,
 		"выполнить":         Execute,
+		"while":             While,
+		"do":                Loop,
+		"enddo":             EndLoop,
+		"to":                To,
 		"асинх":             Async,
 		"async":             Async,
 		"ждать":             Await,
@@ -105,12 +111,51 @@ var (
 	}
 )
 
+// DebugLexer enables token logging when set to true.
+// Use for debugging parser issues.
+var DebugLexer = false
+
 func (t *Token) Next(ast Iast) (token int, err error) {
 	t.ast = ast
 	token, t.literal, err = t.next()
 
 	// Сохраняем тип токена для определения начала statement
 	defer func() { t.prevTokenType = token }()
+
+	// Track procedure context for body-level preprocessor tokens
+	switch token {
+	case Procedure, Function:
+		t.inProcedure = true
+	case EndProcedure, EndFunction:
+		t.inProcedure = false
+	}
+
+	if DebugLexer {
+		pos := t.GetPosition()
+		fmt.Printf("[LEXER] line=%d col=%d token=%d lit=%q inProc=%v\n",
+			pos.Line, pos.Column, token, t.literal, t.inProcedure)
+	}
+
+	// Emit different tokens for preprocessor and Var inside procedure bodies
+	// This avoids reduce/reduce conflict between main and body rules
+	if t.inProcedure {
+		switch token {
+		case PreprocIf:
+			token = PreprocIfBody
+		case PreprocElseIf:
+			token = PreprocElseIfBody
+		case PreprocElse:
+			token = PreprocElseBody
+		case PreprocEndIf:
+			token = PreprocEndIfBody
+		case PreprocRegion:
+			token = PreprocRegionBody
+		case PreprocEndRegion:
+			token = PreprocEndRegionBody
+		case Var:
+			token = VarBody
+		}
+	}
 
 	switch token {
 	case Number:
@@ -384,11 +429,17 @@ func (t *Token) handlePreprocessor() (int, string, error) {
 		t.skipToEOL()
 		return PreprocEndIf, "", nil
 	case "область", "region":
+		t.regionDepth++
 		name := t.scanRegionName()
 		return PreprocRegion, name, nil
 	case "конецобласти", "endregion":
 		t.skipToEOL()
-		return PreprocEndRegion, "", nil
+		if t.regionDepth > 0 {
+			t.regionDepth--
+			return PreprocEndRegion, "", nil
+		}
+		// Orphan #EndRegion (no matching #Region) — skip silently, like 1C platform
+		return t.next()
 	case "использовать", "use":
 		path := t.scanUsePath()
 		return PreprocUse, path, nil
@@ -458,7 +509,7 @@ func (t *Token) skipToEOL() {
 func (t *Token) skipSpaceOnly() {
 	for {
 		ch := t.currentLet()
-		if ch == ' ' || ch == '\t' {
+		if ch == ' ' || ch == '\t' || ch == '\u00A0' {
 			t.nextPos()
 		} else {
 			break
@@ -497,7 +548,7 @@ func (t *Token) atStatementStart() bool {
 	// Токены, после которых идёт НЕ statement, а часть конструкции
 	case Procedure, Function, Async:
 		return false // после них идёт имя функции
-	case Var:
+	case Var, VarBody:
 		return false // после Var идёт имя переменной
 	case For:
 		return false // после For идёт переменная цикла или Each
@@ -522,27 +573,94 @@ func (t *Token) atStatementStart() bool {
 // hasEqualBeforeSemicolon сканирует вперёд и ищет одиночный "=" до ";".
 // Используется для различения lvalue (присваивание) от call_stmt (вызов метода).
 // Учитывает вложенность скобок — "=" внутри скобок игнорируется.
+// ВАЖНО: Также останавливается на ключевых словах, заканчивающих statement
+// (КонецЕсли, КонецЦикла, КонецПроцедуры, etc.)
 func (t *Token) hasEqualBeforeSemicolon() bool {
 	srsCode := t.ast.SrsCode()
 	depth := 0
 	pos := t.offset
+	prevWasDot := false
 
 	for pos < len(srsCode) {
 		ch, size := utf8.DecodeRuneInString(srsCode[pos:])
 		switch ch {
+		case '"':
+			// Пропускаем строковые литералы — внутри могут быть =, ; и др.
+			pos += size
+			for pos < len(srsCode) {
+				sch, ssize := utf8.DecodeRuneInString(srsCode[pos:])
+				pos += ssize
+				if sch == '"' {
+					// В 1С "" внутри строки = экранирование, проверяем следующий символ
+					if pos < len(srsCode) {
+						next, _ := utf8.DecodeRuneInString(srsCode[pos:])
+						if next == '"' {
+							pos += ssize // skip escaped ""
+							continue
+						}
+					}
+					break
+				}
+			}
+			prevWasDot = false
+			continue
+		case '.':
+			prevWasDot = true
 		case '(', '[':
 			depth++
+			prevWasDot = false
 		case ')', ']':
 			depth--
+			prevWasDot = false
 		case '=':
 			// "=" на верхнем уровне вложенности = присваивание
 			// В 1С нет "==", поэтому любой "=" вне скобок — это присваивание
 			if depth == 0 {
 				return true
 			}
-		case ';', EOF:
-			return false // конец statement без "="
+			prevWasDot = false
+		case ';':
+			if depth == 0 {
+				return false // конец statement без "="
+			}
+			// ';' внутри скобок — может быть в строке-параметре, продолжаем
+			prevWasDot = false
+		case EOF:
+			return false
 		// '\n' НЕ останавливает поиск — в 1С statement может занимать несколько строк
+		default:
+			// Сканируем идентификатор целиком для корректного продвижения позиции
+			if isLetter(ch) {
+				wordPos := pos
+				for wordPos < len(srsCode) {
+					wch, wsize := utf8.DecodeRuneInString(srsCode[wordPos:])
+					if !isLetter(wch) && !isDigit(wch) {
+						break
+					}
+					wordPos += wsize
+				}
+				// Проверяем на ключевые слова, заканчивающие блок
+				// НО только на верхнем уровне и НЕ после точки (свойства — не ключевые слова)
+				if depth == 0 && !prevWasDot {
+					word := srsCode[pos:wordPos]
+					lowWord := fastToLower(word)
+					switch lowWord {
+					case "конецесли", "endif",
+						"конеццикла", "enddo",
+						"конецпроцедуры", "endprocedure",
+						"конецфункции", "endfunction",
+						"конецпопытки", "endtry",
+						"иначе", "else",
+						"иначеесли", "elseif",
+						"исключение", "except":
+						return false // конец блока — это не присваивание
+					}
+				}
+				pos = wordPos
+				prevWasDot = false
+				continue
+			}
+			prevWasDot = false
 		}
 		pos += size
 	}
@@ -616,7 +734,7 @@ func isDigit(ch rune) bool {
 }
 
 func isSpace(ch rune) bool {
-	return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n'
+	return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\u00A0'
 }
 
 func IF[T any](condition bool, a, b T) T {

@@ -333,7 +333,8 @@ func TestExecute(t *testing.T) {
 		err := a.Parse()
 		assert.NoError(t, err)
 	})
-	t.Run("Execute-error", func(t *testing.T) {
+	t.Run("Execute-number", func(t *testing.T) {
+		// Execute expr accepts any expression (like Java BSLParser)
 		code := `&НаСервере
 					Процедура ВыполнитьВБезопасномРежиме(Знач Алгоритм, Знач Параметры = Неопределено)
 						Выполнить 32;
@@ -341,9 +342,9 @@ func TestExecute(t *testing.T) {
 
 		a := NewAST(code)
 		err := a.Parse()
-		assert.EqualError(t, err, "syntax error. line: 3, column: 16 (unexpected literal: \"32\")")
+		assert.NoError(t, err)
 	})
-	t.Run("Execute-error", func(t *testing.T) {
+	t.Run("Execute-multi-arg-error", func(t *testing.T) {
 		code := `&НаСервере
 					Процедура ВыполнитьВБезопасномРежиме(Знач Алгоритм, Знач Параметры = Неопределено)
 						Выполнить "Алгоритм", "";
@@ -351,9 +352,11 @@ func TestExecute(t *testing.T) {
 
 		a := NewAST(code)
 		err := a.Parse()
+		// Comma after "Алгоритм" is unexpected — Execute takes one expression
 		assert.EqualError(t, err, "syntax error. line: 3, column: 26 (unexpected literal: \",\")")
 	})
-	t.Run("Execute-error-2", func(t *testing.T) {
+	t.Run("Execute-parens-multi", func(t *testing.T) {
+		// Execute (expr, expr) — parenthesized expressions list
 		code := `&НаСервере
 					Процедура ВыполнитьВБезопасномРежиме(Знач Алгоритм, Знач Параметры = Неопределено)
 						Выполнить ("Алгоритм", "");
@@ -361,7 +364,7 @@ func TestExecute(t *testing.T) {
 
 		a := NewAST(code)
 		err := a.Parse()
-		assert.EqualError(t, err, "syntax error. line: 3, column: 27 (unexpected literal: \",\")")
+		assert.NoError(t, err)
 	})
 	t.Run("Eval-1", func(t *testing.T) {
 		code := `&НаСервере
@@ -374,6 +377,8 @@ func TestExecute(t *testing.T) {
 		assert.NoError(t, err)
 	})
 	t.Run("Eval-2", func(t *testing.T) {
+		// Grammar uses optional semicolons (like Java BSLParser SEMICOLON?).
+		// "Вычислить Алгоритм;" is parsed as two statements without separator.
 		code := `&НаСервере
 					Процедура ВыполнитьВБезопасномРежиме(Знач Алгоритм, Знач Параметры = Неопределено)
 						Вычислить Алгоритм;
@@ -381,7 +386,7 @@ func TestExecute(t *testing.T) {
 
 		a := NewAST(code)
 		err := a.Parse()
-		assert.EqualError(t, err, "syntax error. line: 3, column: 16 (unexpected literal: \"Алгоритм\")")
+		assert.NoError(t, err)
 	})
 }
 
@@ -572,8 +577,9 @@ func TestParseIF(t *testing.T) {
 		err := a.Parse()
 		assert.NoError(t, err)
 	})
-	t.Run("error", func(t *testing.T) {
-		code := `Процедура ПодключитьВнешнююОбработку() 
+	t.Run("no-semicolons", func(t *testing.T) {
+		// Grammar uses optional semicolons — missing ; between statements is accepted
+		code := `Процедура ПодключитьВнешнююОбработку()
 					Если в = 1 И (а = 1 или у = 3) Тогда
 						Если в = 1 или у = 3 Тогда
 							а = 1 + 3 * 4
@@ -588,7 +594,7 @@ func TestParseIF(t *testing.T) {
 
 		a := NewAST(code)
 		err := a.Parse()
-		assert.EqualError(t, err, "syntax error. line: 5, column: 7 (unexpected literal: \"b\")")
+		assert.NoError(t, err)
 	})
 	t.Run("error", func(t *testing.T) {
 		code := `Процедура ПодключитьВнешнююОбработку() 
@@ -1437,6 +1443,8 @@ func TestParseFunctionProcedure(t *testing.T) {
 			assert.EqualError(t, err, "syntax error. line: 5, column: 6 (unexpected literal: \"Если\")")
 		})
 		t.Run("with var error", func(t *testing.T) {
+			// Перем after statements is now allowed in body (VarBody token)
+			// This supports UNF files with Перем inside #Область
 			code := `Процедура ПодключитьВнешнююОбработку(Ссылка)
 						Если истина Тогда
 							ВызватьИсключение "";
@@ -1447,7 +1455,7 @@ func TestParseFunctionProcedure(t *testing.T) {
 
 			a := NewAST(code)
 			err := a.Parse()
-			assert.EqualError(t, err, "syntax error. line: 6, column: 6 (unexpected literal: \"Перем\")")
+			assert.NoError(t, err)
 		})
 		t.Run("with region", func(t *testing.T) {
 			code := `#Область ПрограммныйИнтерфейс
@@ -1564,15 +1572,16 @@ func TestParseBaseExpression(t *testing.T) {
 		err := a.Parse()
 		assert.NoError(t, err)
 	})
-	t.Run("error", func(t *testing.T) {
-		code := `Процедура ПодключитьВнешнююОбработку(Ссылка) 
+	t.Run("no-semicolons", func(t *testing.T) {
+		// Grammar uses optional semicolons — missing ; between statements is accepted
+		code := `Процедура ПодключитьВнешнююОбработку(Ссылка)
 					ds = 222
 					uu = 9;
 				КонецПроцедуры`
 
 		a := NewAST(code)
 		err := a.Parse()
-		assert.EqualError(t, err, "syntax error. line: 3, column: 5 (unexpected literal: \"uu\")")
+		assert.NoError(t, err)
 	})
 	t.Run("pass", func(t *testing.T) {
 		code := `Процедура ПодключитьВнешнююОбработку(Ссылка) 
@@ -3430,6 +3439,409 @@ func TestPrint_AssignmentInExpression(t *testing.T) {
     а = б = в;
 КонецПроцедуры
 `
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// TC-FR044-0: Test procedure inside module-level preprocessor block
+func TestParse_ProcedureInsideModuleLevelPreproc(t *testing.T) {
+	code := `#Если Сервер Или ТолстыйКлиентОбычноеПриложение Или ВнешнееСоединение Тогда
+
+#Область ОбработчикиСобытий
+
+Процедура ОбработкаЗаполнения(ДанныеЗаполнения, ТекстЗаполнения, СтандартнаяОбработка)
+	Если Ссылка.Пустая() Тогда
+		ПриСоздании(ДанныеЗаполнения)
+	КонецЕсли
+КонецПроцедуры
+
+Процедура ПриКопировании(ОбъектКопирования)
+	ПриСоздании(ОбъектКопирования)
+КонецПроцедуры
+
+#КонецОбласти
+#КонецЕсли`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.Len(t, a.ModuleStatement.Body, 1)
+}
+
+// TC-FR044: Test preprocessor inside procedure body (FR-044)
+func TestParse_PreprocessorInsideProcedure(t *testing.T) {
+	code := `
+Процедура ТестовыйМетод()
+    #Если Клиент Тогда
+        а = 1;
+    #ИначеЕсли Сервер Тогда
+        а = 2;
+    #Иначе
+        а = 3;
+    #КонецЕсли
+КонецПроцедуры
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	proc, ok := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, ok, "Expected FunctionOrProcedure")
+	assert.Equal(t, "ТестовыйМетод", proc.Name)
+
+	// Procedure body should contain the preprocessor statement
+	assert.Len(t, proc.Body, 1, "Procedure body should have 1 statement (PreprocessorIfStatement)")
+	preproc, ok := proc.Body[0].(*PreprocessorIfStatement)
+	assert.True(t, ok, "Expected PreprocessorIfStatement inside procedure body")
+	assert.Equal(t, "Клиент", preproc.Condition)
+	assert.Len(t, preproc.ElseIfs, 1)
+	assert.Equal(t, "Сервер", preproc.ElseIfs[0].Condition)
+	assert.NotNil(t, preproc.ElseBlock)
+}
+
+// TC-FR044-2: Test nested preprocessor inside procedure with region
+func TestParse_PreprocessorNestedInsideProcedure(t *testing.T) {
+	code := `
+Функция Тест() Экспорт
+    #Область Внутренняя
+        #Если Сервер Тогда
+            а = 1;
+        #КонецЕсли
+    #КонецОбласти
+КонецФункции
+`
+	a := NewAST(code)
+	err := a.Parse()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Len(t, a.ModuleStatement.Body, 1)
+	fn, ok := a.ModuleStatement.Body[0].(*FunctionOrProcedure)
+	assert.True(t, ok)
+
+	// Body-level regions are standalone directives (not containers)
+	// because 1C allows regions to split code blocks (e.g. inside loops).
+	// Expect: RegionStart, #If, RegionEnd = 3 items
+	assert.Len(t, fn.Body, 3, "Function body should have region start, #If, region end")
+
+	// First: region start
+	region, ok := fn.Body[0].(*RegionStatement)
+	assert.True(t, ok, "First should be RegionStatement (start)")
+	assert.Equal(t, "Внутренняя", region.Name)
+
+	// Second: nested #Если
+	nestedPreproc, ok := fn.Body[1].(*PreprocessorIfStatement)
+	assert.True(t, ok, "Second should be PreprocessorIfStatement")
+	assert.Equal(t, "Сервер", nestedPreproc.Condition)
+
+	// Third: region end
+	regionEnd, ok := fn.Body[2].(*RegionStatement)
+	assert.True(t, ok, "Third should be RegionStatement (end)")
+	assert.Equal(t, "", regionEnd.Name)
+}
+
+// =============================================================================
+// UNF Error Category Tests — real patterns from 15K+ production BSL files
+// Each test corresponds to a category from error-analysis.md
+// =============================================================================
+
+// Category 1: Semicolons after proc/func declarations (299 files — 64.2%)
+// Pattern: Процедура Имя(Параметры); — semicolon after closing paren
+func TestUNF_SemicolonAfterProcDecl(t *testing.T) {
+	t.Run("procedure-with-semicolon", func(t *testing.T) {
+		code := `&НаСервере
+Процедура Обработать(Отказ);
+	а = 1;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("function-with-semicolon", func(t *testing.T) {
+		code := `Функция РодительПоИдентификатору(МассивРодителей);
+	Возврат Неопределено;
+КонецФункции`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("procedure-export-with-semicolon", func(t *testing.T) {
+		code := `Процедура Тест(Парам1, Знач Парам2) Экспорт;
+	а = 1;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("directive-procedure-with-semicolon", func(t *testing.T) {
+		code := `&НаКлиентеНаСервереБезКонтекста
+Процедура ПоказатьНедействительных(Форма);
+	а = 1;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+}
+
+// Category 2: Semicolons after control keywords (13 files — 2.8%)
+// Pattern: Цикл; Тогда; — semicolons after Loop/Then
+func TestUNF_SemicolonAfterControlKeyword(t *testing.T) {
+	t.Run("semicolon-after-loop", func(t *testing.T) {
+		code := `Процедура Тест()
+	Для Каждого Стр Из Таблица Цикл;
+		а = 1;
+	КонецЦикла;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("semicolon-after-then", func(t *testing.T) {
+		code := `Процедура Тест()
+	Если а = 1 Тогда;
+		б = 2;
+	КонецЕсли;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+}
+
+// Category 3: Await (Ждать) as standalone statement (36 files — 7.7%)
+// Pattern: Ждать Method(args); — not assigned to variable
+func TestUNF_AwaitAsStatement(t *testing.T) {
+	t.Run("await-standalone", func(t *testing.T) {
+		code := `Асинх Процедура Тест()
+	Ждать ПредупреждениеАсинх("Готово");
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("await-in-if", func(t *testing.T) {
+		code := `Асинх Процедура Тест()
+	Если Результат.Успешно Тогда
+		Ждать ПредупреждениеАсинх("Успех");
+	Иначе
+		Ждать ПредупреждениеАсинх("Ошибка");
+	КонецЕсли;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("await-chained-call", func(t *testing.T) {
+		code := `Асинх Процедура Тест()
+	Ждать Сертификат.ИнициализироватьАсинх(Данные);
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+}
+
+// Category 5: Method().Property = value (19 files — 4.1%)
+// Pattern: call result used as lvalue for assignment
+func TestUNF_CallResultAsLvalue(t *testing.T) {
+	t.Run("method-result-property-assign", func(t *testing.T) {
+		code := `Процедура Тест()
+	ПараметрыОжидания().Включено = Ложь;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("method-with-args-property-assign", func(t *testing.T) {
+		code := `Процедура Тест()
+	ВидКонтактнойИнформации(ВидКИ).Наименование = Заголовок;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+}
+
+// Category 6: Complex lvalue — indexed property assignment (8 files — 1.7%)
+// Pattern: Области["expr"].Property = value
+func TestUNF_ComplexLvalue(t *testing.T) {
+	t.Run("indexed-property-assign", func(t *testing.T) {
+		code := `Процедура Тест()
+	Области["П0000101001"].Значение = Сумма;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("indexed-with-expr-property-assign", func(t *testing.T) {
+		code := `Процедура Тест()
+	Области["П0000" + Формат(Гр, "ЧЦ=2")].Значение = СуммаПоКол;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+}
+
+// Category 7: Proc decl without semicolon — missing ) handling (8 files — 1.7%)
+// Pattern: Процедура Имя(Параметры) <newline> body — no semicolon, no Экспорт
+func TestUNF_ProcDeclNoSemicolon(t *testing.T) {
+	code := `&НаКлиенте
+Процедура Подключаемый_Выполнить(Команда)
+	Клиент.Синхронизировать();
+КонецПроцедуры`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// Category 8: Ternary().method (4 files — 0.9%)
+// Pattern: ?(cond, a, b).Method() — ternary result used as object
+func TestUNF_TernaryDotMethod(t *testing.T) {
+	t.Run("ternary-method-call", func(t *testing.T) {
+		code := `Процедура Тест()
+	Имена = ?(Флаг, Мета.Справ.Один, Мета.Справ.Два).ПолучитьИмена();
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("ternary-property", func(t *testing.T) {
+		code := `Процедура Тест()
+	Имя = ?(Страница = Неопределено, Элементы.Группа.ТекущаяСтраница, Страница).Имя;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+}
+
+// Category 9: Перем (Var) inside #Region in procedure body (3 files — 0.6%)
+func TestUNF_VarInsideRegionInBody(t *testing.T) {
+	code := `Процедура Тест()
+	#Область Инициализация
+		Перем МассивНовостей;
+		а = 1;
+	#КонецОбласти
+КонецПроцедуры`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// Category 10: Execute with expression (2 files — 0.4%)
+// Pattern: Выполнить ИмяМетода + "(" + args + ")"
+func TestUNF_ExecuteWithExpression(t *testing.T) {
+	code := `Процедура Тест()
+	Выполнить ИмяМетода + "(" + ПараметрыСтрока + ")";
+КонецПроцедуры`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// Category 11: КонецПроцедуры; at module level (5 files — 1.1%)
+func TestUNF_EndProcSemicolonModuleLevel(t *testing.T) {
+	code := `Процедура Тест()
+	а = 1;
+КонецПроцедуры;
+
+Процедура Тест2()
+	б = 2;
+КонецПроцедуры`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// Category 12: Reserved keyword as property name after dot (2 files)
+// Pattern: Выбор.Иначе = x, Параметры.КонецЦикла = x
+func TestUNF_KeywordAsPropertyName(t *testing.T) {
+	t.Run("else-as-property", func(t *testing.T) {
+		code := `Процедура Тест()
+	Выбор.Иначе = Значение;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+
+	t.Run("endloop-as-property", func(t *testing.T) {
+		code := `Процедура Тест()
+	Параметры.КонецЦикла = Вершина;
+КонецПроцедуры`
+		a := NewAST(code)
+		err := a.Parse()
+		assert.NoError(t, err)
+	})
+}
+
+// Category 13: Indexed lvalue with string containing special chars (7 files)
+// Pattern: Области["expr" + Формат(x, "ЧЦ=2; ЧВН=")].Значение = value
+func TestUNF_IndexedLvalueWithSpecialString(t *testing.T) {
+	code := `Процедура Тест()
+	Области["П0000101001" + Формат(Гр, "ЧЦ=2; ЧВН=")].Значение = СуммаПоКол;
+КонецПроцедуры`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// Category 14: КонецПроцедуры; followed by more procedures in same #Region (10 files)
+func TestUNF_EndProcSemicolonMultiple(t *testing.T) {
+	code := `#Область Тест
+
+&НаКлиенте
+Процедура Тест1()
+	а = 1;
+КонецПроцедуры;
+
+&НаСервере
+Процедура Тест2()
+	б = 2;
+КонецПроцедуры;
+
+#КонецОбласти`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// Category 15: English While/Do keywords (1 file)
+func TestUNF_EnglishWhileDo(t *testing.T) {
+	code := `Процедура Тест()
+	While а <> Неопределено Do
+		а = а.Следующий;
+	EndDo;
+КонецПроцедуры`
+	a := NewAST(code)
+	err := a.Parse()
+	assert.NoError(t, err)
+}
+
+// Category 16: English For/To keywords (1 file)
+func TestUNF_EnglishForTo(t *testing.T) {
+	code := `Процедура Тест()
+	Для Индекс = 0 To Количество - 1 Цикл
+		а = Индекс;
+	КонецЦикла;
+КонецПроцедуры`
 	a := NewAST(code)
 	err := a.Parse()
 	assert.NoError(t, err)
